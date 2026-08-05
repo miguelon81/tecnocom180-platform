@@ -1,0 +1,408 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// =====================
+// ENUMS
+// =====================
+
+enum UserRole {
+  SUPER_ADMIN
+  ORG_ADMIN
+  RECEPTION
+  TECHNICIAN
+}
+
+enum RoomStatus {
+  AVAILABLE
+  OCCUPIED
+  MAINTENANCE
+  CLEANING
+}
+
+enum DeviceType {
+  ROUTER
+  SWITCH
+  ACCESS_POINT
+  CAMERA
+  NVR
+  UPS
+  MODEM
+  SERVER
+  NAS
+  IOT
+  OTHER
+}
+
+enum TicketStatus {
+  OPEN
+  PENDING
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketType {
+  WIFI
+  INTERNET
+  TV
+  CAMERA
+  NETWORK
+  OTHER
+}
+
+enum DiagnosticStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+// =====================
+// ORGANIZATION
+// =====================
+
+model Organization {
+  id String @id @default(uuid())
+
+  name String
+
+  slug String @unique
+
+  phone String?
+
+  email String?
+
+  timezone String @default("America/Mexico_City")
+
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  updatedAt DateTime @updatedAt
+
+  users User[]
+
+  sites Site[]
+
+  tickets Ticket[]
+
+  diagnostics DiagnosticRun[]
+}
+
+// =====================
+// USERS
+// =====================
+
+model User {
+  id String @id @default(uuid())
+
+  organizationId String
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  name String
+
+  email String @unique
+
+  passwordHash String
+
+  phone String?
+
+  role UserRole
+
+  active Boolean @default(true)
+
+  lastLogin DateTime?
+
+  createdAt DateTime @default(now())
+
+  updatedAt DateTime @updatedAt
+
+  assignedTickets Ticket[]
+
+  @@index([organizationId])
+}
+
+// =====================
+// SITES
+// =====================
+
+model Site {
+  id String @id @default(uuid())
+
+  organizationId String
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  name String
+
+  code String
+
+  address String?
+
+  city String?
+
+  state String?
+
+  country String?
+
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  updatedAt DateTime @updatedAt
+
+  areas Area[]
+
+  rooms Room[]
+
+  devices Device[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+}
+
+// =====================
+// AREAS
+// =====================
+
+model Area {
+  id String @id @default(uuid())
+
+  siteId String
+
+  site Site @relation(fields: [siteId], references: [id])
+
+  name String
+
+  type String?
+
+  createdAt DateTime @default(now())
+
+  updatedAt DateTime @updatedAt
+
+  rooms Room[]
+
+  devices Device[]
+
+  @@index([siteId])
+}
+
+// =====================
+// ROOMS
+// =====================
+
+model Room {
+  id String @id @default(uuid())
+
+  siteId String
+
+  site Site @relation(fields: [siteId], references: [id])
+
+  areaId String?
+
+  area Area? @relation(fields: [areaId], references: [id])
+
+  number String
+
+  floor Int?
+
+  status RoomStatus @default(AVAILABLE)
+
+  createdAt DateTime @default(now())
+
+  updatedAt DateTime @updatedAt
+
+  tickets Ticket[]
+
+  @@unique([siteId, number])
+  @@index([siteId])
+}
+
+// =====================
+// BRAND
+// =====================
+
+model Brand {
+  id String @id @default(uuid())
+
+  name String @unique
+
+  createdAt DateTime @default(now())
+
+  models DeviceModel[]
+}
+
+// =====================
+// DEVICE MODEL
+// =====================
+
+model DeviceModel {
+  id String @id @default(uuid())
+
+  brandId String
+
+  brand Brand @relation(fields: [brandId], references: [id])
+
+  name String
+
+  type DeviceType
+
+  createdAt DateTime @default(now())
+
+  devices Device[]
+
+  @@index([brandId])
+}
+
+// =====================
+// DEVICES
+// =====================
+
+model Device {
+  id String @id @default(uuid())
+
+  siteId String
+
+  site Site @relation(fields: [siteId], references: [id])
+
+  areaId String?
+
+  area Area? @relation(fields: [areaId], references: [id])
+
+  modelId String
+
+  model DeviceModel @relation(fields: [modelId], references: [id])
+
+  hostname String?
+
+  serial String?
+
+  ip String?
+
+  mac String?
+
+  firmware String?
+
+  online Boolean @default(false)
+
+  installedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  updatedAt DateTime @updatedAt
+
+  @@index([siteId])
+  @@index([modelId])
+}
+
+// =====================
+// TICKETS
+// =====================
+
+model Ticket {
+  id String @id @default(uuid())
+
+  organizationId String
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  roomId String?
+
+  room Room? @relation(fields: [roomId], references: [id])
+
+  assignedToId String?
+
+  assignedTo User? @relation(fields: [assignedToId], references: [id])
+
+  type TicketType
+
+  status TicketStatus @default(OPEN)
+
+  title String
+
+  description String?
+
+  createdAt DateTime @default(now())
+
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+// =====================
+// DIAGNOSTICS
+// =====================
+
+model DiagnosticRun {
+  id String @id @default(uuid())
+
+  organizationId String
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  status DiagnosticStatus @default(RUNNING)
+
+  startedAt DateTime @default(now())
+
+  finishedAt DateTime?
+
+  result DiagnosticResult?
+
+  @@index([organizationId])
+}
+
+// =====================
+// DIAGNOSTIC RESULTS
+// =====================
+
+model DiagnosticResult {
+  id String @id @default(uuid())
+
+  diagnosticRunId String @unique
+
+  diagnosticRun DiagnosticRun @relation(fields: [diagnosticRunId], references: [id])
+
+  pingMs Float?
+
+  downloadMbps Float?
+
+  uploadMbps Float?
+
+  packetLoss Float?
+
+  gateway String?
+
+  dns String?
+
+  internet Boolean?
+}
+
+// =====================
+// AUDIT LOG
+// =====================
+
+model AuditLog {
+  id String @id @default(uuid())
+
+  organizationId String
+
+  userId String?
+
+  action String
+
+  entity String
+
+  entityId String?
+
+  data String?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId])
+}
