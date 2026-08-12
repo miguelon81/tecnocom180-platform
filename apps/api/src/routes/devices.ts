@@ -69,5 +69,31 @@ devicesRouter.post("/", async (req, res) => {
     res.status(500).json({ error: "Failed to create device" });
   }
 });
+devicesRouter.patch("/:id", async (req, res) => {
+  try {
+    const { areaId } = req.body;
 
+    const device = await prisma.device.update({
+      where: {
+        id: req.params.id,
+      },
+      data: {
+        areaId,
+      },
+      include: {
+        model: {
+          include: {
+            brand: true,
+          },
+        },
+        area: true,
+      },
+    });
+
+    res.json(device);
+  } catch (error) {
+    console.error("Error updating device:", error);
+    res.status(500).json({ error: "Failed to update device" });
+  }
+});
 export { devicesRouter };

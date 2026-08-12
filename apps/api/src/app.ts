@@ -5,6 +5,7 @@ import { organizationsRouter } from "./routes/organizations";
 import { sitesRouter } from "./routes/sites";
 import { brandsRouter } from "./routes/brands";
 import { modelsRouter } from "./routes/models";
+import { areasRouter } from "./routes/areas";
 
 const app = express();
 
@@ -16,4 +17,5 @@ app.use("/organizations", organizationsRouter);
 app.use("/sites", sitesRouter);
 app.use("/brands", brandsRouter);
 app.use("/models", modelsRouter);
+app.use("/areas", areasRouter);
 export { app };
