@@ -23,5 +23,8 @@
     "network-management",
     "tecnocom180"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@prisma/adapter-libsql": "7.9.1"
+  }
 }
