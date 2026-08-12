@@ -163,6 +163,8 @@ model Site {
 
   devices Device[]
 
+  tickets Ticket[]
+
   @@unique([organizationId, code])
   @@index([organizationId])
 }
@@ -189,6 +191,8 @@ model Area {
   rooms Room[]
 
   devices Device[]
+
+  tickets Ticket[]
 
   @@index([siteId])
 }
@@ -297,6 +301,8 @@ model Device {
 
   updatedAt DateTime @updatedAt
 
+  tickets Ticket[]
+
   @@index([siteId])
   @@index([modelId])
 }
@@ -311,6 +317,18 @@ model Ticket {
   organizationId String
 
   organization Organization @relation(fields: [organizationId], references: [id])
+
+  siteId String?
+
+  site Site? @relation(fields: [siteId], references: [id])
+
+  areaId String?
+
+  area Area? @relation(fields: [areaId], references: [id])
+
+  deviceId String?
+
+  device Device? @relation(fields: [deviceId], references: [id])
 
   roomId String?
 
@@ -333,6 +351,10 @@ model Ticket {
   updatedAt DateTime @updatedAt
 
   @@index([organizationId])
+  @@index([siteId])
+  @@index([areaId])
+  @@index([deviceId])
+  @@index([roomId])
 }
 
 // =====================

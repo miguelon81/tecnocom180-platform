@@ -6,6 +6,7 @@ import { sitesRouter } from "./routes/sites";
 import { brandsRouter } from "./routes/brands";
 import { modelsRouter } from "./routes/models";
 import { areasRouter } from "./routes/areas";
+import { ticketsRouter } from "./routes/tickets";
 
 const app = express();
 
@@ -18,4 +19,5 @@ app.use("/sites", sitesRouter);
 app.use("/brands", brandsRouter);
 app.use("/models", modelsRouter);
 app.use("/areas", areasRouter);
+app.use("/tickets", ticketsRouter);
 export { app };
