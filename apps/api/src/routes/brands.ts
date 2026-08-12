@@ -3,11 +3,15 @@ import { prisma } from "../lib/prisma";
 
 const brandsRouter = Router();
 
+// GET /brands
 brandsRouter.get("/", async (_req, res) => {
   try {
     const brands = await prisma.brand.findMany({
       include: {
         models: true,
+      },
+      orderBy: {
+        name: "asc",
       },
     });
 
@@ -18,24 +22,160 @@ brandsRouter.get("/", async (_req, res) => {
   }
 });
 
+// GET /brands/:id
+brandsRouter.get("/:id", async (req, res) => {
+  try {
+    const brand = await prisma.brand.findUnique({
+      where: {
+        id: req.params.id,
+      },
+      include: {
+        models: {
+          include: {
+            devices: true,
+          },
+        },
+      },
+    });
+
+    if (!brand) {
+      return res.status(404).json({
+        error: "Brand not found",
+      });
+    }
+
+    res.json(brand);
+  } catch (error) {
+    console.error("Error fetching brand:", error);
+    res.status(500).json({ error: "Failed to fetch brand" });
+  }
+});
+
+// POST /brands
 brandsRouter.post("/", async (req, res) => {
   try {
     const { name } = req.body;
 
-    if (!name) {
+    if (!name || typeof name !== "string" || !name.trim()) {
       return res.status(400).json({
         error: "name is required",
       });
     }
 
     const brand = await prisma.brand.create({
-      data: { name },
+      data: {
+        name: name.trim(),
+      },
     });
 
     res.status(201).json(brand);
   } catch (error) {
     console.error("Error creating brand:", error);
+
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2002"
+    ) {
+      return res.status(409).json({
+        error: "A brand with this name already exists",
+      });
+    }
+
     res.status(500).json({ error: "Failed to create brand" });
+  }
+});
+
+// PATCH /brands/:id
+brandsRouter.patch("/:id", async (req, res) => {
+  try {
+    const { name } = req.body;
+
+    if (!name || typeof name !== "string" || !name.trim()) {
+      return res.status(400).json({
+        error: "name is required",
+      });
+    }
+
+    const brand = await prisma.brand.update({
+      where: {
+        id: req.params.id,
+      },
+      data: {
+        name: name.trim(),
+      },
+      include: {
+        models: true,
+      },
+    });
+
+    res.json(brand);
+  } catch (error) {
+    console.error("Error updating brand:", error);
+
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2002"
+    ) {
+      return res.status(409).json({
+        error: "A brand with this name already exists",
+      });
+    }
+
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2025"
+    ) {
+      return res.status(404).json({
+        error: "Brand not found",
+      });
+    }
+
+    res.status(500).json({ error: "Failed to update brand" });
+  }
+});
+
+// DELETE /brands/:id
+brandsRouter.delete("/:id", async (req, res) => {
+  try {
+    await prisma.brand.delete({
+      where: {
+        id: req.params.id,
+      },
+    });
+
+    res.status(204).send();
+  } catch (error) {
+    console.error("Error deleting brand:", error);
+
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2025"
+    ) {
+      return res.status(404).json({
+        error: "Brand not found",
+      });
+    }
+
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2003"
+    ) {
+      return res.status(409).json({
+        error: "Brand cannot be deleted because it has related models",
+      });
+    }
+
+    res.status(500).json({ error: "Failed to delete brand" });
   }
 });
 
