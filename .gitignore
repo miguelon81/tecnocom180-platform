@@ -33,3 +33,7 @@ coverage/
 *.tmp
 *.temp
 /generated/prisma
+
+# Local SQLite database
+/dev.db
+/dev.db-journal
