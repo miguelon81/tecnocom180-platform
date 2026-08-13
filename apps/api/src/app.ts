@@ -10,6 +10,7 @@ import { ticketsRouter } from "./routes/tickets";
 import { roomsRouter } from "./routes/rooms";
 import { usersRouter } from "./routes/users";
 import { authRouter } from "./routes/auth";
+import { diagnosticsRouter } from "./routes/diagnostics";
 
 const app = express();
 
@@ -25,6 +26,7 @@ app.use("/brands", brandsRouter);
 app.use("/models", modelsRouter);
 app.use("/areas", areasRouter);
 app.use("/tickets", ticketsRouter);
+app.use("/diagnostics", diagnosticsRouter);
 app.use("/rooms", roomsRouter);
 app.use("/users", usersRouter);
 
