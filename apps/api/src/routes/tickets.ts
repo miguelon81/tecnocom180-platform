@@ -3,26 +3,28 @@ import { prisma } from "../lib/prisma";
 
 const ticketsRouter = Router();
 
+const ticketInclude = {
+  organization: true,
+  site: true,
+  area: true,
+  device: {
+    include: {
+      model: {
+        include: {
+          brand: true,
+        },
+      },
+    },
+  },
+  room: true,
+  assignedTo: true,
+};
+
 // GET /tickets
 ticketsRouter.get("/", async (_req, res) => {
   try {
     const tickets = await prisma.ticket.findMany({
-      include: {
-        organization: true,
-        site: true,
-        area: true,
-        device: {
-          include: {
-            model: {
-              include: {
-                brand: true,
-              },
-            },
-          },
-        },
-        room: true,
-        assignedTo: true,
-      },
+      include: ticketInclude,
       orderBy: {
         createdAt: "desc",
       },
@@ -42,22 +44,7 @@ ticketsRouter.get("/:id", async (req, res) => {
       where: {
         id: req.params.id,
       },
-      include: {
-        organization: true,
-        site: true,
-        area: true,
-        device: {
-          include: {
-            model: {
-              include: {
-                brand: true,
-              },
-            },
-          },
-        },
-        room: true,
-        assignedTo: true,
-      },
+      include: ticketInclude,
     });
 
     if (!ticket) {
@@ -106,27 +93,24 @@ ticketsRouter.post("/", async (req, res) => {
         title,
         description,
       },
-      include: {
-        organization: true,
-        site: true,
-        area: true,
-        device: {
-          include: {
-            model: {
-              include: {
-                brand: true,
-              },
-            },
-          },
-        },
-        room: true,
-        assignedTo: true,
-      },
+      include: ticketInclude,
     });
 
     res.status(201).json(ticket);
   } catch (error) {
     console.error("Error creating ticket:", error);
+
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2003"
+    ) {
+      return res.status(404).json({
+        error: "Related record not found",
+      });
+    }
+
     res.status(500).json({ error: "Failed to create ticket" });
   }
 });
@@ -141,38 +125,100 @@ ticketsRouter.patch("/:id", async (req, res) => {
       description,
     } = req.body;
 
+    const validStatuses = [
+      "OPEN",
+      "PENDING",
+      "IN_PROGRESS",
+      "RESOLVED",
+      "CLOSED",
+    ];
+
+    if (status !== undefined && !validStatuses.includes(status)) {
+      return res.status(400).json({
+        error: "Invalid ticket status",
+        validStatuses,
+      });
+    }
+
     const ticket = await prisma.ticket.update({
       where: {
         id: req.params.id,
       },
       data: {
-        status,
-        assignedToId,
-        title,
-        description,
+        ...(status !== undefined && { status }),
+        ...(assignedToId !== undefined && { assignedToId }),
+        ...(title !== undefined && { title }),
+        ...(description !== undefined && { description }),
       },
-      include: {
-        organization: true,
-        site: true,
-        area: true,
-        device: {
-          include: {
-            model: {
-              include: {
-                brand: true,
-              },
-            },
-          },
-        },
-        room: true,
-        assignedTo: true,
-      },
+      include: ticketInclude,
     });
 
     res.json(ticket);
   } catch (error) {
     console.error("Error updating ticket:", error);
+
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2025"
+    ) {
+      return res.status(404).json({
+        error: "Ticket not found",
+      });
+    }
+
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2003"
+    ) {
+      return res.status(404).json({
+        error: "Related record not found",
+      });
+    }
+
     res.status(500).json({ error: "Failed to update ticket" });
+  }
+});
+
+// DELETE /tickets/:id
+ticketsRouter.delete("/:id", async (req, res) => {
+  try {
+    await prisma.ticket.delete({
+      where: {
+        id: req.params.id,
+      },
+    });
+
+    res.status(204).send();
+  } catch (error) {
+    console.error("Error deleting ticket:", error);
+
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2025"
+    ) {
+      return res.status(404).json({
+        error: "Ticket not found",
+      });
+    }
+
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2003"
+    ) {
+      return res.status(409).json({
+        error: "Ticket cannot be deleted because it has related records",
+      });
+    }
+
+    res.status(500).json({ error: "Failed to delete ticket" });
   }
 });
 
