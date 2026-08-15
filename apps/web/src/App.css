@@ -1,0 +1,168 @@
+#root {
+  min-height: 100vh;
+}
+
+.page {
+  width: min(1200px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 48px 0;
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 32px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: #2563eb;
+}
+
+h1 {
+  margin: 0;
+  color: #111827;
+  font-size: 36px;
+  line-height: 1.1;
+}
+
+.subtitle {
+  margin-top: 10px;
+  color: #6b7280;
+}
+
+.site-count {
+  padding: 8px 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  color: #374151;
+  background: #fff;
+  font-size: 14px;
+}
+
+.sites-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 20px;
+}
+
+.site-card {
+  padding: 24px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 5%);
+}
+
+.site-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.site-code {
+  margin: 0 0 5px;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+}
+
+.site-card h2 {
+  margin: 0;
+  color: #111827;
+  font-size: 22px;
+}
+
+.site-location {
+  margin: 12px 0 24px;
+  color: #6b7280;
+}
+
+.status {
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.status-active {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.status-inactive {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.site-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.site-stats div {
+  padding: 14px;
+  border-radius: 10px;
+  background: #f9fafb;
+}
+
+.site-stats strong {
+  display: block;
+  color: #111827;
+  font-size: 22px;
+}
+
+.site-stats span {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.device-status {
+  display: flex;
+  gap: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #f0f0f0;
+  color: #4b5563;
+  font-size: 13px;
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+}
+
+.dot-online {
+  background: #22c55e;
+}
+
+.dot-offline {
+  background: #9ca3af;
+}
+
+@media (max-width: 640px) {
+  .page {
+    width: min(100% - 28px, 1200px);
+    padding: 28px 0;
+  }
+
+  .page-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .sites-grid {
+    grid-template-columns: 1fr;
+  }
+}

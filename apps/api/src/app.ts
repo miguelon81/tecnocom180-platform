@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import { healthRouter } from "./routes/health";
 import { devicesRouter } from "./routes/devices";
 import { organizationsRouter } from "./routes/organizations";
@@ -14,10 +15,14 @@ import { diagnosticsRouter } from "./routes/diagnostics";
 
 const app = express();
 
+app.use(
+  cors({
+    origin: "http://localhost:5173",
+  }),
+);
+
 app.use(express.json());
-
 app.use("/auth", authRouter);
-
 app.use("/health", healthRouter);
 app.use("/devices", devicesRouter);
 app.use("/organizations", organizationsRouter);
