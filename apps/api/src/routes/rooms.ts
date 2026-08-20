@@ -285,7 +285,12 @@ roomsRouter.post(
 roomsRouter.patch(
   "/:id",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN"),
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "RECEPTION",
+    "TECHNICIAN",
+  ),
   async (req: AuthenticatedRequest, res) => {
     try {
       const {
@@ -319,6 +324,40 @@ roomsRouter.patch(
           error: "Room not found",
         });
       }
+const role = req.user!.role;
+
+if (role === "RECEPTION") {
+  if (
+    number !== undefined ||
+    floor !== undefined ||
+    areaId !== undefined
+  ) {
+    return res.status(403).json({
+      error:
+        "Reception can only change the room status",
+    });
+  }
+}
+
+if (role === "TECHNICIAN") {
+  if (
+    number !== undefined ||
+    floor !== undefined ||
+    areaId !== undefined
+  ) {
+    return res.status(403).json({
+      error:
+        "Technician cannot modify room data",
+    });
+  }
+
+  if (status !== "MAINTENANCE") {
+    return res.status(403).json({
+      error:
+        "Technician can only set a room to maintenance",
+    });
+  }
+}
 
       if (
         !canAccessOrganization(

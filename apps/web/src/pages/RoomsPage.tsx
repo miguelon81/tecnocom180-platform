@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 
+import { useAuth } from '../auth/AuthContext'
 import { getSites } from '../api/sites'
 import type { Site, RoomStatus } from '../types/site'
 import { apiFetch } from '../api/client'
-import { useAuth } from '../auth/AuthContext'
 
 type Area = {
   id: string
@@ -147,12 +147,21 @@ async function getAreas(siteId: string): Promise<Area[]> {
 }
 
 function RoomsPage() {
-
   const { user } = useAuth()
 
+  const role = user?.role
+
   const canManageRooms =
-    user?.role === 'SUPER_ADMIN' ||
-    user?.role === 'ORG_ADMIN'
+    role === 'SUPER_ADMIN' ||
+    role === 'ORG_ADMIN'
+
+  const canChangeRoomStatus =
+    canManageRooms ||
+    role === 'RECEPTION' ||
+    role === 'TECHNICIAN'
+
+  const isTechnician =
+    role === 'TECHNICIAN'
 
   const [rooms, setRooms] = useState<Room[]>([])
   const [sites, setSites] = useState<Site[]>([])
@@ -170,9 +179,6 @@ function RoomsPage() {
   const [editingRoom, setEditingRoom] = useState<Room | null>(null)
 
   const [form, setForm] = useState<RoomForm>(emptyForm)
-
-  
-  
 
   useEffect(() => {
     async function initialize() {
@@ -267,7 +273,8 @@ function RoomsPage() {
       areaId: room.areaId ?? '',
       number: room.number,
       floor:
-        room.floor !== null && room.floor !== undefined
+        room.floor !== null &&
+        room.floor !== undefined
           ? String(room.floor)
           : '',
       status: room.status,
@@ -427,6 +434,16 @@ function RoomsPage() {
     room: Room,
     status: RoomStatus,
   ) {
+    if (
+      isTechnician &&
+      status !== 'MAINTENANCE'
+    ) {
+      setError(
+        'El técnico solo puede poner habitaciones en mantenimiento',
+      )
+      return
+    }
+
     try {
       setError(null)
 
@@ -538,18 +555,17 @@ function RoomsPage() {
               </select>
             </label>
 
-{canManageRooms && (
-  <button
-    type="button"
-    onClick={openCreateForm}
-  >
-    + Nueva habitación
-  </button>
-)}           
-
+            {canManageRooms && (
+              <button
+                type="button"
+                onClick={openCreateForm}
+              >
+                + Nueva habitación
+              </button>
+            )}
           </section>
 
-          {canManageRooms && showForm && (
+          {showForm && canManageRooms && (
             <section
               style={{
                 marginBottom: '24px',
@@ -790,60 +806,72 @@ function RoomsPage() {
                     Piso {room.floor ?? '—'}
                   </p>
 
-                  {canManageRooms && (
-  <div
-    style={{
-      display: 'flex',
-      gap: '8px',
-      marginTop: '18px',
-      flexWrap: 'wrap',
-    }}
-  >
-    <button
-      type="button"
-      onClick={() =>
-        openEditForm(room)
-      }
-    >
-      Editar
-    </button>
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: '8px',
+                      marginTop: '18px',
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    {canManageRooms && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openEditForm(room)
+                        }
+                      >
+                        Editar
+                      </button>
+                    )}
 
-    <select
-      value={room.status}
-      onChange={(event) =>
-        handleStatusChange(
-          room,
-          event.target.value as RoomStatus,
-        )
-      }
-    >
-      <option value="AVAILABLE">
-        Disponible
-      </option>
+                    {canChangeRoomStatus && (
+                      <select
+                        value={room.status}
+                        onChange={(event) =>
+                          handleStatusChange(
+                            room,
+                            event.target.value as RoomStatus,
+                          )
+                        }
+                      >
+                        {isTechnician ? (
+                          <option value="MAINTENANCE">
+                            Mantenimiento
+                          </option>
+                        ) : (
+                          <>
+                            <option value="AVAILABLE">
+                              Disponible
+                            </option>
 
-      <option value="OCCUPIED">
-        Ocupada
-      </option>
+                            <option value="OCCUPIED">
+                              Ocupada
+                            </option>
 
-      <option value="MAINTENANCE">
-        Mantenimiento
-      </option>
+                            <option value="MAINTENANCE">
+                              Mantenimiento
+                            </option>
 
-      <option value="CLEANING">
-        Limpieza
-      </option>
-    </select>
+                            <option value="CLEANING">
+                              Limpieza
+                            </option>
+                          </>
+                        )}
+                      </select>
+                    )}
 
-    <button
-      type="button"
-      onClick={() =>
-        handleDelete(room)
-      }
-    >
-      Eliminar
-    </button>
-  </div>
-)}
+                    {canManageRooms && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleDelete(room)
+                        }
+                      >
+                        Eliminar
+                      </button>
+                    )}
+                  </div>
                 </article>
               ))}
             </section>

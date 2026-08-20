@@ -71,7 +71,6 @@ devicesRouter.get(
 
       let organizationId: string | undefined;
 
-      // Validar Site
       if (siteId) {
         const site = await prisma.site.findUnique({
           where: {
@@ -99,7 +98,6 @@ devicesRouter.get(
         organizationId = req.user!.organizationId;
       }
 
-      // Validar Area
       if (areaId) {
         const area = await prisma.area.findUnique({
           where: {
@@ -136,6 +134,23 @@ devicesRouter.get(
         organizationId ??= area.site.organizationId;
       }
 
+      if (modelId) {
+        const model = await prisma.deviceModel.findUnique({
+          where: {
+            id: modelId,
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        if (!model) {
+          return res.status(404).json({
+            error: "Model not found",
+          });
+        }
+      }
+
       const devices = await prisma.device.findMany({
         where: {
           ...(organizationId && {
@@ -159,11 +174,11 @@ devicesRouter.get(
         },
       });
 
-      res.json(devices);
+      return res.json(devices);
     } catch (error) {
       console.error("Error fetching devices:", error);
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "Failed to fetch devices",
       });
     }
@@ -211,11 +226,11 @@ devicesRouter.get(
         });
       }
 
-      res.json(device);
+      return res.json(device);
     } catch (error) {
       console.error("Error fetching device:", error);
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "Failed to fetch device",
       });
     }
@@ -248,7 +263,6 @@ devicesRouter.post(
         });
       }
 
-      // Validar Site y organización
       const site = await prisma.site.findUnique({
         where: {
           id: siteId,
@@ -271,7 +285,6 @@ devicesRouter.post(
         });
       }
 
-      // Validar modelo
       const model = await prisma.deviceModel.findUnique({
         where: {
           id: modelId,
@@ -287,7 +300,6 @@ devicesRouter.post(
         });
       }
 
-      // Validar Area
       if (areaId) {
         const area = await prisma.area.findUnique({
           where: {
@@ -348,7 +360,7 @@ devicesRouter.post(
         include: deviceInclude,
       });
 
-      res.status(201).json(device);
+      return res.status(201).json(device);
     } catch (error) {
       console.error("Error creating device:", error);
 
@@ -359,7 +371,8 @@ devicesRouter.post(
         error.code === "P2002"
       ) {
         return res.status(409).json({
-          error: "A device with the specified unique data already exists",
+          error:
+            "A device with the specified unique data already exists",
         });
       }
 
@@ -374,7 +387,7 @@ devicesRouter.post(
         });
       }
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "Failed to create device",
       });
     }
@@ -411,6 +424,7 @@ devicesRouter.patch(
           select: {
             id: true,
             siteId: true,
+            areaId: true,
             site: {
               select: {
                 organizationId: true,
@@ -442,7 +456,6 @@ devicesRouter.patch(
       let targetOrganizationId =
         existingDevice.site.organizationId;
 
-      // Validar Site destino
       if (siteId !== undefined) {
         const targetSite = await prisma.site.findUnique({
           where: {
@@ -486,7 +499,6 @@ devicesRouter.patch(
         }
       }
 
-      // Validar modelo
       if (modelId !== undefined) {
         const model =
           await prisma.deviceModel.findUnique({
@@ -505,11 +517,29 @@ devicesRouter.patch(
         }
       }
 
-      // Validar Area
-      if (areaId !== undefined && areaId !== null) {
+      /*
+       * Regla importante:
+       *
+       * Si se cambia de Site y no se especifica un nuevo Area,
+       * el dispositivo debe quedar sin Area.
+       *
+       * Esto evita conservar un areaId perteneciente al Site anterior.
+       */
+      const siteIsChanging =
+        siteId !== undefined &&
+        siteId !== existingDevice.siteId;
+
+      let targetAreaId: string | null | undefined =
+        areaId !== undefined
+          ? areaId
+          : siteIsChanging
+            ? null
+            : existingDevice.areaId;
+
+      if (targetAreaId !== null && targetAreaId !== undefined) {
         const area = await prisma.area.findUnique({
           where: {
-            id: areaId,
+            id: targetAreaId,
           },
           select: {
             id: true,
@@ -564,9 +594,11 @@ devicesRouter.patch(
           ...(siteId !== undefined && {
             siteId,
           }),
-          ...(areaId !== undefined && {
-            areaId: areaId ?? null,
-          }),
+          ...(areaId !== undefined || siteIsChanging
+            ? {
+                areaId: targetAreaId,
+              }
+            : {}),
           ...(modelId !== undefined && {
             modelId,
           }),
@@ -598,7 +630,7 @@ devicesRouter.patch(
         },
       });
 
-      res.json(device);
+      return res.json(device);
     } catch (error) {
       console.error("Error updating device:", error);
 
@@ -636,7 +668,7 @@ devicesRouter.patch(
         });
       }
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "Failed to update device",
       });
     }
@@ -690,7 +722,7 @@ devicesRouter.delete(
         },
       });
 
-      res.status(204).send();
+      return res.status(204).send();
     } catch (error) {
       console.error("Error deleting device:", error);
 
@@ -717,7 +749,7 @@ devicesRouter.delete(
         });
       }
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "Failed to delete device",
       });
     }
