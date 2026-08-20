@@ -20,7 +20,7 @@ const deviceInclude = {
 
 function canAccessOrganization(
   req: AuthenticatedRequest,
-  organizationId: string
+  organizationId: string,
 ) {
   if (!req.user) {
     return false;
@@ -33,6 +33,12 @@ function canAccessOrganization(
   return req.user.organizationId === organizationId;
 }
 
+function getDeviceId(req: AuthenticatedRequest) {
+  return Array.isArray(req.params.id)
+    ? req.params.id[0]
+    : req.params.id;
+}
+
 // GET /devices
 // GET /devices?siteId=xxx
 // GET /devices?areaId=xxx
@@ -40,15 +46,32 @@ function canAccessOrganization(
 devicesRouter.get(
   "/",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN", "TECHNICIAN"),
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "RECEPTION",
+    "TECHNICIAN",
+  ),
   async (req: AuthenticatedRequest, res) => {
     try {
-      const siteId = req.query.siteId as string | undefined;
-      const areaId = req.query.areaId as string | undefined;
-      const modelId = req.query.modelId as string | undefined;
+      const siteId =
+        typeof req.query.siteId === "string"
+          ? req.query.siteId
+          : undefined;
+
+      const areaId =
+        typeof req.query.areaId === "string"
+          ? req.query.areaId
+          : undefined;
+
+      const modelId =
+        typeof req.query.modelId === "string"
+          ? req.query.modelId
+          : undefined;
 
       let organizationId: string | undefined;
 
+      // Validar Site
       if (siteId) {
         const site = await prisma.site.findUnique({
           where: {
@@ -76,6 +99,7 @@ devicesRouter.get(
         organizationId = req.user!.organizationId;
       }
 
+      // Validar Area
       if (areaId) {
         const area = await prisma.area.findUnique({
           where: {
@@ -119,9 +143,15 @@ devicesRouter.get(
               organizationId,
             },
           }),
-          ...(siteId && { siteId }),
-          ...(areaId && { areaId }),
-          ...(modelId && { modelId }),
+          ...(siteId && {
+            siteId,
+          }),
+          ...(areaId && {
+            areaId,
+          }),
+          ...(modelId && {
+            modelId,
+          }),
         },
         include: deviceInclude,
         orderBy: {
@@ -137,19 +167,26 @@ devicesRouter.get(
         error: "Failed to fetch devices",
       });
     }
-  }
+  },
 );
 
 // GET /devices/:id
 devicesRouter.get(
   "/:id",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN", "TECHNICIAN"),
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "RECEPTION",
+    "TECHNICIAN",
+  ),
   async (req: AuthenticatedRequest, res) => {
     try {
+      const deviceId = getDeviceId(req);
+
       const device = await prisma.device.findUnique({
         where: {
-          id: req.params.id as string,
+          id: deviceId,
         },
         include: {
           ...deviceInclude,
@@ -166,7 +203,7 @@ devicesRouter.get(
       if (
         !canAccessOrganization(
           req,
-          device.site.organizationId
+          device.site.organizationId,
         )
       ) {
         return res.status(403).json({
@@ -182,7 +219,7 @@ devicesRouter.get(
         error: "Failed to fetch device",
       });
     }
-  }
+  },
 );
 
 // POST /devices
@@ -211,6 +248,7 @@ devicesRouter.post(
         });
       }
 
+      // Validar Site y organización
       const site = await prisma.site.findUnique({
         where: {
           id: siteId,
@@ -233,6 +271,7 @@ devicesRouter.post(
         });
       }
 
+      // Validar modelo
       const model = await prisma.deviceModel.findUnique({
         where: {
           id: modelId,
@@ -248,6 +287,7 @@ devicesRouter.post(
         });
       }
 
+      // Validar Area
       if (areaId) {
         const area = await prisma.area.findUnique({
           where: {
@@ -256,6 +296,11 @@ devicesRouter.post(
           select: {
             id: true,
             siteId: true,
+            site: {
+              select: {
+                organizationId: true,
+              },
+            },
           },
         });
 
@@ -270,6 +315,17 @@ devicesRouter.post(
             error: "Area does not belong to the specified site",
           });
         }
+
+        if (
+          !canAccessOrganization(
+            req,
+            area.site.organizationId,
+          )
+        ) {
+          return res.status(403).json({
+            error: "Access denied for this organization",
+          });
+        }
       }
 
       const device = await prisma.device.create({
@@ -282,8 +338,12 @@ devicesRouter.post(
           ip,
           mac,
           firmware,
-          ...(online !== undefined && { online }),
-          ...(installedAt !== undefined && { installedAt }),
+          ...(online !== undefined && {
+            online,
+          }),
+          ...(installedAt !== undefined && {
+            installedAt,
+          }),
         },
         include: deviceInclude,
       });
@@ -291,6 +351,17 @@ devicesRouter.post(
       res.status(201).json(device);
     } catch (error) {
       console.error("Error creating device:", error);
+
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2002"
+      ) {
+        return res.status(409).json({
+          error: "A device with the specified unique data already exists",
+        });
+      }
 
       if (
         typeof error === "object" &&
@@ -307,16 +378,18 @@ devicesRouter.post(
         error: "Failed to create device",
       });
     }
-  }
+  },
 );
 
 // PATCH /devices/:id
 devicesRouter.patch(
   "/:id",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN", "TECHNICIAN"),
+  requireRole("SUPER_ADMIN", "ORG_ADMIN"),
   async (req: AuthenticatedRequest, res) => {
     try {
+      const deviceId = getDeviceId(req);
+
       const {
         siteId,
         areaId,
@@ -330,22 +403,21 @@ devicesRouter.patch(
         installedAt,
       } = req.body;
 
-      const deviceId = req.params.id as string;
-
-      const existingDevice = await prisma.device.findUnique({
-        where: {
-          id: deviceId,
-        },
-        select: {
-          id: true,
-          siteId: true,
-          site: {
-            select: {
-              organizationId: true,
+      const existingDevice =
+        await prisma.device.findUnique({
+          where: {
+            id: deviceId,
+          },
+          select: {
+            id: true,
+            siteId: true,
+            site: {
+              select: {
+                organizationId: true,
+              },
             },
           },
-        },
-      });
+        });
 
       if (!existingDevice) {
         return res.status(404).json({
@@ -356,7 +428,7 @@ devicesRouter.patch(
       if (
         !canAccessOrganization(
           req,
-          existingDevice.site.organizationId
+          existingDevice.site.organizationId,
         )
       ) {
         return res.status(403).json({
@@ -364,40 +436,67 @@ devicesRouter.patch(
         });
       }
 
-      const targetSiteId = siteId ?? existingDevice.siteId;
+      const targetSiteId =
+        siteId ?? existingDevice.siteId;
 
+      let targetOrganizationId =
+        existingDevice.site.organizationId;
+
+      // Validar Site destino
       if (siteId !== undefined) {
-        const site = await prisma.site.findUnique({
+        const targetSite = await prisma.site.findUnique({
           where: {
             id: siteId,
           },
           select: {
+            id: true,
             organizationId: true,
           },
         });
 
-        if (!site) {
+        if (!targetSite) {
           return res.status(404).json({
             error: "Site not found",
           });
         }
 
-        if (!canAccessOrganization(req, site.organizationId)) {
+        targetOrganizationId =
+          targetSite.organizationId;
+
+        if (
+          targetOrganizationId !==
+            existingDevice.site.organizationId &&
+          req.user!.role !== "SUPER_ADMIN"
+        ) {
           return res.status(403).json({
-            error: "Access denied for this organization",
+            error:
+              "Only SUPER_ADMIN can move a device between organizations",
+          });
+        }
+
+        if (
+          !canAccessOrganization(
+            req,
+            targetOrganizationId,
+          )
+        ) {
+          return res.status(403).json({
+            error: "Access denied for target organization",
           });
         }
       }
 
+      // Validar modelo
       if (modelId !== undefined) {
-        const model = await prisma.deviceModel.findUnique({
-          where: {
-            id: modelId,
-          },
-          select: {
-            id: true,
-          },
-        });
+        const model =
+          await prisma.deviceModel.findUnique({
+            where: {
+              id: modelId,
+            },
+            select: {
+              id: true,
+            },
+          });
 
         if (!model) {
           return res.status(404).json({
@@ -406,6 +505,7 @@ devicesRouter.patch(
         }
       }
 
+      // Validar Area
       if (areaId !== undefined && areaId !== null) {
         const area = await prisma.area.findUnique({
           where: {
@@ -414,6 +514,11 @@ devicesRouter.patch(
           select: {
             id: true,
             siteId: true,
+            site: {
+              select: {
+                organizationId: true,
+              },
+            },
           },
         });
 
@@ -428,6 +533,27 @@ devicesRouter.patch(
             error: "Area does not belong to the specified site",
           });
         }
+
+        if (
+          !canAccessOrganization(
+            req,
+            area.site.organizationId,
+          )
+        ) {
+          return res.status(403).json({
+            error: "Access denied for area organization",
+          });
+        }
+
+        if (
+          area.site.organizationId !==
+          targetOrganizationId
+        ) {
+          return res.status(400).json({
+            error:
+              "Area does not belong to the target organization",
+          });
+        }
       }
 
       const device = await prisma.device.update({
@@ -435,18 +561,36 @@ devicesRouter.patch(
           id: deviceId,
         },
         data: {
-          ...(siteId !== undefined && { siteId }),
+          ...(siteId !== undefined && {
+            siteId,
+          }),
           ...(areaId !== undefined && {
             areaId: areaId ?? null,
           }),
-          ...(modelId !== undefined && { modelId }),
-          ...(hostname !== undefined && { hostname }),
-          ...(serial !== undefined && { serial }),
-          ...(ip !== undefined && { ip }),
-          ...(mac !== undefined && { mac }),
-          ...(firmware !== undefined && { firmware }),
-          ...(online !== undefined && { online }),
-          ...(installedAt !== undefined && { installedAt }),
+          ...(modelId !== undefined && {
+            modelId,
+          }),
+          ...(hostname !== undefined && {
+            hostname,
+          }),
+          ...(serial !== undefined && {
+            serial,
+          }),
+          ...(ip !== undefined && {
+            ip,
+          }),
+          ...(mac !== undefined && {
+            mac,
+          }),
+          ...(firmware !== undefined && {
+            firmware,
+          }),
+          ...(online !== undefined && {
+            online,
+          }),
+          ...(installedAt !== undefined && {
+            installedAt,
+          }),
         },
         include: {
           ...deviceInclude,
@@ -473,6 +617,18 @@ devicesRouter.patch(
         typeof error === "object" &&
         error !== null &&
         "code" in error &&
+        error.code === "P2002"
+      ) {
+        return res.status(409).json({
+          error:
+            "A device with the specified unique data already exists",
+        });
+      }
+
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
         error.code === "P2003"
       ) {
         return res.status(400).json({
@@ -484,7 +640,7 @@ devicesRouter.patch(
         error: "Failed to update device",
       });
     }
-  }
+  },
 );
 
 // DELETE /devices/:id
@@ -494,21 +650,22 @@ devicesRouter.delete(
   requireRole("SUPER_ADMIN", "ORG_ADMIN"),
   async (req: AuthenticatedRequest, res) => {
     try {
-      const deviceId = req.params.id as string;
+      const deviceId = getDeviceId(req);
 
-      const existingDevice = await prisma.device.findUnique({
-        where: {
-          id: deviceId,
-        },
-        select: {
-          id: true,
-          site: {
-            select: {
-              organizationId: true,
+      const existingDevice =
+        await prisma.device.findUnique({
+          where: {
+            id: deviceId,
+          },
+          select: {
+            id: true,
+            site: {
+              select: {
+                organizationId: true,
+              },
             },
           },
-        },
-      });
+        });
 
       if (!existingDevice) {
         return res.status(404).json({
@@ -519,7 +676,7 @@ devicesRouter.delete(
       if (
         !canAccessOrganization(
           req,
-          existingDevice.site.organizationId
+          existingDevice.site.organizationId,
         )
       ) {
         return res.status(403).json({
@@ -564,7 +721,7 @@ devicesRouter.delete(
         error: "Failed to delete device",
       });
     }
-  }
+  },
 );
 
 export { devicesRouter };

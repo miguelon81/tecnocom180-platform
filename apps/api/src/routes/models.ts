@@ -1,197 +1,417 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
+import {
+  authenticateToken,
+  requireRole,
+  AuthenticatedRequest,
+} from "../middleware/auth";
 
 const modelsRouter = Router();
 
-// GET /models
-modelsRouter.get("/", async (_req, res) => {
-  try {
-    const models = await prisma.deviceModel.findMany({
-      include: {
-        brand: true,
-        devices: true,
-      },
-      orderBy: {
-        name: "asc",
-      },
-    });
+// Los valores deben coincidir con el enum DeviceType de Prisma.
+const validDeviceTypes = [
+  "ROUTER",
+  "SWITCH",
+  "ACCESS_POINT",
+  "CAMERA",
+  "NVR",
+  "UPS",
+  "MODEM",
+  "SERVER",
+  "NAS",
+  "IOT",
+  "OTHER",
+] as const;
 
-    res.json(models);
-  } catch (error) {
-    console.error("Error fetching models:", error);
-    res.status(500).json({ error: "Failed to fetch models" });
-  }
-});
+type DeviceTypeValue =
+  (typeof validDeviceTypes)[number];
+
+function isValidDeviceType(
+  value: unknown,
+): value is DeviceTypeValue {
+  return (
+    typeof value === "string" &&
+    validDeviceTypes.includes(
+      value as DeviceTypeValue,
+    )
+  );
+}
+
+function getModelId(req: AuthenticatedRequest) {
+  return Array.isArray(req.params.id)
+    ? req.params.id[0]
+    : req.params.id;
+}
+
+// GET /models
+modelsRouter.get(
+  "/",
+  authenticateToken,
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "RECEPTION",
+    "TECHNICIAN",
+  ),
+  async (_req: AuthenticatedRequest, res) => {
+    try {
+      const models =
+        await prisma.deviceModel.findMany({
+          include: {
+            brand: true,
+            devices: true,
+          },
+          orderBy: {
+            name: "asc",
+          },
+        });
+
+      res.json(models);
+    } catch (error) {
+      console.error(
+        "Error fetching models:",
+        error,
+      );
+
+      res.status(500).json({
+        error: "Failed to fetch models",
+      });
+    }
+  },
+);
 
 // GET /models/:id
-modelsRouter.get("/:id", async (req, res) => {
-  try {
-    const model = await prisma.deviceModel.findUnique({
-      where: {
-        id: req.params.id,
-      },
-      include: {
-        brand: true,
-        devices: true,
-      },
-    });
+modelsRouter.get(
+  "/:id",
+  authenticateToken,
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "RECEPTION",
+    "TECHNICIAN",
+  ),
+  async (
+    req: AuthenticatedRequest,
+    res,
+  ) => {
+    try {
+      const modelId = getModelId(req);
 
-    if (!model) {
-      return res.status(404).json({
-        error: "Model not found",
+      const model =
+        await prisma.deviceModel.findUnique({
+          where: {
+            id: modelId,
+          },
+          include: {
+            brand: true,
+            devices: true,
+          },
+        });
+
+      if (!model) {
+        return res.status(404).json({
+          error: "Model not found",
+        });
+      }
+
+      res.json(model);
+    } catch (error) {
+      console.error(
+        "Error fetching model:",
+        error,
+      );
+
+      res.status(500).json({
+        error: "Failed to fetch model",
       });
     }
-
-    res.json(model);
-  } catch (error) {
-    console.error("Error fetching model:", error);
-    res.status(500).json({ error: "Failed to fetch model" });
-  }
-});
+  },
+);
 
 // POST /models
-modelsRouter.post("/", async (req, res) => {
-  try {
-    const { brandId, name, type } = req.body;
-
-    if (!brandId || !name || !type) {
-      return res.status(400).json({
-        error: "brandId, name and type are required",
-      });
-    }
-
-    const model = await prisma.deviceModel.create({
-      data: {
+modelsRouter.post(
+  "/",
+  authenticateToken,
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+  ),
+  async (
+    req: AuthenticatedRequest,
+    res,
+  ) => {
+    try {
+      const {
+        brandId,
         name,
         type,
-        brand: {
-          connect: {
+      } = req.body;
+
+      if (!brandId || !name || !type) {
+        return res.status(400).json({
+          error:
+            "brandId, name and type are required",
+        });
+      }
+
+      if (
+        typeof name !== "string" ||
+        !name.trim()
+      ) {
+        return res.status(400).json({
+          error:
+            "name must be a non-empty string",
+        });
+      }
+
+      if (!isValidDeviceType(type)) {
+        return res.status(400).json({
+          error: "Invalid device type",
+          validDeviceTypes,
+        });
+      }
+
+      const brand =
+        await prisma.brand.findUnique({
+          where: {
             id: brandId,
           },
-        },
-      },
-      include: {
-        brand: true,
-      },
-    });
+          select: {
+            id: true,
+          },
+        });
 
-    res.status(201).json(model);
-  } catch (error) {
-    console.error("Error creating model:", error);
+      if (!brand) {
+        return res.status(404).json({
+          error: "Brand not found",
+        });
+      }
 
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2025"
-    ) {
-      return res.status(404).json({
-        error: "Brand not found",
+      const model =
+        await prisma.deviceModel.create({
+          data: {
+            brandId,
+            name: name.trim(),
+            type,
+          },
+          include: {
+            brand: true,
+            devices: true,
+          },
+        });
+
+      res.status(201).json(model);
+    } catch (error) {
+      console.error(
+        "Error creating model:",
+        error,
+      );
+
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2003"
+      ) {
+        return res.status(404).json({
+          error: "Brand not found",
+        });
+      }
+
+      res.status(500).json({
+        error: "Failed to create model",
       });
     }
-
-    res.status(500).json({
-      error: "Failed to create model",
-    });
-  }
-});
+  },
+);
 
 // PATCH /models/:id
-modelsRouter.patch("/:id", async (req, res) => {
-  try {
-    const { brandId, name, type } = req.body;
+modelsRouter.patch(
+  "/:id",
+  authenticateToken,
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+  ),
+  async (
+    req: AuthenticatedRequest,
+    res,
+  ) => {
+    try {
+      const modelId = getModelId(req);
 
-    if (
-      brandId === undefined &&
-      name === undefined &&
-      type === undefined
-    ) {
-      return res.status(400).json({
-        error: "At least one field is required",
-      });
-    }
+      const {
+        brandId,
+        name,
+        type,
+      } = req.body;
 
-    const model = await prisma.deviceModel.update({
-      where: {
-        id: req.params.id,
-      },
-      data: {
-        ...(name !== undefined && { name }),
-        ...(type !== undefined && { type }),
-        ...(brandId !== undefined && {
-          brand: {
-            connect: {
+      if (
+        brandId === undefined &&
+        name === undefined &&
+        type === undefined
+      ) {
+        return res.status(400).json({
+          error:
+            "At least one field is required",
+        });
+      }
+
+      if (
+        name !== undefined &&
+        (
+          typeof name !== "string" ||
+          !name.trim()
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "name must be a non-empty string",
+        });
+      }
+
+      if (
+        type !== undefined &&
+        !isValidDeviceType(type)
+      ) {
+        return res.status(400).json({
+          error: "Invalid device type",
+          validDeviceTypes,
+        });
+      }
+
+      if (brandId !== undefined) {
+        const brand =
+          await prisma.brand.findUnique({
+            where: {
               id: brandId,
             },
+            select: {
+              id: true,
+            },
+          });
+
+        if (!brand) {
+          return res.status(404).json({
+            error: "Brand not found",
+          });
+        }
+      }
+
+      const model =
+        await prisma.deviceModel.update({
+          where: {
+            id: modelId,
           },
-        }),
-      },
-      include: {
-        brand: true,
-        devices: true,
-      },
-    });
+          data: {
+            ...(name !== undefined && {
+              name: name.trim(),
+            }),
+            ...(type !== undefined && {
+              type,
+            }),
+            ...(brandId !== undefined && {
+              brandId,
+            }),
+          },
+          include: {
+            brand: true,
+            devices: true,
+          },
+        });
 
-    res.json(model);
-  } catch (error) {
-    console.error("Error updating model:", error);
+      res.json(model);
+    } catch (error) {
+      console.error(
+        "Error updating model:",
+        error,
+      );
 
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2025"
-    ) {
-      return res.status(404).json({
-        error: "Model or brand not found",
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2025"
+      ) {
+        return res.status(404).json({
+          error: "Model not found",
+        });
+      }
+
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2003"
+      ) {
+        return res.status(404).json({
+          error: "Brand not found",
+        });
+      }
+
+      res.status(500).json({
+        error: "Failed to update model",
       });
     }
-
-    res.status(500).json({
-      error: "Failed to update model",
-    });
-  }
-});
+  },
+);
 
 // DELETE /models/:id
-modelsRouter.delete("/:id", async (req, res) => {
-  try {
-    await prisma.deviceModel.delete({
-      where: {
-        id: req.params.id,
-      },
-    });
+modelsRouter.delete(
+  "/:id",
+  authenticateToken,
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+  ),
+  async (
+    req: AuthenticatedRequest,
+    res,
+  ) => {
+    try {
+      const modelId = getModelId(req);
 
-    res.status(204).send();
-  } catch (error) {
-    console.error("Error deleting model:", error);
+      await prisma.deviceModel.delete({
+        where: {
+          id: modelId,
+        },
+      });
 
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2025"
-    ) {
-      return res.status(404).json({
-        error: "Model not found",
+      res.status(204).send();
+    } catch (error) {
+      console.error(
+        "Error deleting model:",
+        error,
+      );
+
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2025"
+      ) {
+        return res.status(404).json({
+          error: "Model not found",
+        });
+      }
+
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2003"
+      ) {
+        return res.status(409).json({
+          error:
+            "Model cannot be deleted because it has related devices",
+        });
+      }
+
+      res.status(500).json({
+        error: "Failed to delete model",
       });
     }
-
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2003"
-    ) {
-      return res.status(409).json({
-        error: "Model cannot be deleted because it has related devices",
-      });
-    }
-
-    res.status(500).json({
-      error: "Failed to delete model",
-    });
-  }
-});
+  },
+);
 
 export { modelsRouter };

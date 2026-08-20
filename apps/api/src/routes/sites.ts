@@ -1,80 +1,151 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
+import {
+  authenticateToken,
+  requireRole,
+  AuthenticatedRequest,
+} from "../middleware/auth";
 
 const sitesRouter = Router();
 
-// GET /sites
-sitesRouter.get("/", async (_req, res) => {
-  try {
-    const sites = await prisma.site.findMany({
-      include: {
-        organization: true,
-        areas: true,
-        rooms: true,
-        devices: true,
-      },
-      orderBy: {
-        name: "asc",
-      },
-    });
-
-    res.json(sites);
-  } catch (error) {
-    console.error("Error fetching sites:", error);
-    res.status(500).json({ error: "Failed to fetch sites" });
+function canAccessOrganization(
+  req: AuthenticatedRequest,
+  organizationId: string,
+) {
+  if (!req.user) {
+    return false;
   }
-});
+
+  if (req.user.role === "SUPER_ADMIN") {
+    return true;
+  }
+
+  return req.user.organizationId === organizationId;
+}
+
+const siteInclude = {
+  organization: true,
+  areas: true,
+  rooms: true,
+  devices: true,
+};
+
+// GET /sites
+sitesRouter.get(
+  "/",
+  authenticateToken,
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "RECEPTION",
+    "TECHNICIAN",
+  ),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const where =
+        req.user!.role === "SUPER_ADMIN"
+          ? {}
+          : {
+              organizationId: req.user!.organizationId,
+            };
+
+      const sites = await prisma.site.findMany({
+        where,
+        include: siteInclude,
+        orderBy: {
+          name: "asc",
+        },
+      });
+
+      res.json(sites);
+    } catch (error) {
+      console.error("Error fetching sites:", error);
+
+      res.status(500).json({
+        error: "Failed to fetch sites",
+      });
+    }
+  },
+);
 
 // GET /sites/:id
-sitesRouter.get("/:id", async (req, res) => {
-  try {
-    const site = await prisma.site.findUnique({
-      where: {
-        id: req.params.id,
-      },
-      include: {
-        organization: true,
-        areas: true,
-        rooms: true,
-        devices: true,
-      },
-    });
+sitesRouter.get(
+  "/:id",
+  authenticateToken,
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "RECEPTION",
+    "TECHNICIAN",
+  ),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const siteId = Array.isArray(req.params.id)
+        ? req.params.id[0]
+        : req.params.id;
 
-    if (!site) {
-      return res.status(404).json({
-        error: "Site not found",
+      const site = await prisma.site.findUnique({
+        where: {
+          id: siteId,
+        },
+        include: siteInclude,
+      });
+
+      if (!site) {
+        return res.status(404).json({
+          error: "Site not found",
+        });
+      }
+
+      if (!canAccessOrganization(req, site.organizationId)) {
+        return res.status(403).json({
+          error: "Access denied for this organization",
+        });
+      }
+
+      res.json(site);
+    } catch (error) {
+      console.error("Error fetching site:", error);
+
+      res.status(500).json({
+        error: "Failed to fetch site",
       });
     }
-
-    res.json(site);
-  } catch (error) {
-    console.error("Error fetching site:", error);
-    res.status(500).json({ error: "Failed to fetch site" });
-  }
-});
+  },
+);
 
 // POST /sites
-sitesRouter.post("/", async (req, res) => {
-  try {
-    const {
-      organizationId,
-      name,
-      code,
-      address,
-      city,
-      state,
-      country,
-      active,
-    } = req.body;
+sitesRouter.post(
+  "/",
+  authenticateToken,
+  requireRole("SUPER_ADMIN", "ORG_ADMIN"),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const {
+        organizationId,
+        name,
+        code,
+        address,
+        city,
+        state,
+        country,
+        active,
+      } = req.body;
 
-    if (!organizationId || !name || !code) {
-      return res.status(400).json({
-        error: "organizationId, name and code are required",
-      });
-    }
+      if (!organizationId || !name || !code) {
+        return res.status(400).json({
+          error: "organizationId, name and code are required",
+        });
+      }
 
-    const site = await prisma.site.create({
-      data: {
+      if (!canAccessOrganization(req, organizationId)) {
+        return res.status(403).json({
+          error: "Access denied for this organization",
+        });
+      }
+
+      const site = await prisma.site.create({
+       data: {
         organizationId,
         name,
         code,
@@ -83,156 +154,252 @@ sitesRouter.post("/", async (req, res) => {
         state,
         country,
         ...(active !== undefined && { active }),
-      },
-      include: {
-        organization: true,
-      },
-    });
+       },
+       include: siteInclude,
+     });
 
-    res.status(201).json(site);
-  } catch (error) {
-    console.error("Error creating site:", error);
+      res.status(201).json(site);
+    } catch (error) {
+      console.error("Error creating site:", error);
 
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2002"
-    ) {
-      return res.status(409).json({
-        error: "A site with this code already exists",
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2002"
+      ) {
+        return res.status(409).json({
+          error: "A site with this code already exists",
+        });
+      }
+
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2003"
+      ) {
+        return res.status(404).json({
+          error: "Organization not found",
+        });
+      }
+
+      res.status(500).json({
+        error: "Failed to create site",
       });
     }
-
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2003"
-    ) {
-      return res.status(404).json({
-        error: "Organization not found",
-      });
-    }
-
-    res.status(500).json({ error: "Failed to create site" });
-  }
-});
+  },
+);
 
 // PATCH /sites/:id
-sitesRouter.patch("/:id", async (req, res) => {
-  try {
-    const {
-      organizationId,
-      name,
-      code,
-      address,
-      city,
-      state,
-      country,
-      active,
-    } = req.body;
+sitesRouter.patch(
+  "/:id",
+  authenticateToken,
+  requireRole("SUPER_ADMIN", "ORG_ADMIN"),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const siteId = Array.isArray(req.params.id)
+        ? req.params.id[0]
+        : req.params.id;
 
-    const site = await prisma.site.update({
-      where: {
-        id: req.params.id,
-      },
-      data: {
-        ...(organizationId !== undefined && { organizationId }),
-        ...(name !== undefined && { name }),
-        ...(code !== undefined && { code }),
-        ...(address !== undefined && { address }),
-        ...(city !== undefined && { city }),
-        ...(state !== undefined && { state }),
-        ...(country !== undefined && { country }),
-        ...(active !== undefined && { active }),
-      },
-      include: {
-        organization: true,
-        areas: true,
-        rooms: true,
-        devices: true,
-      },
-    });
+      const {
+        organizationId,
+        name,
+        code,
+        address,
+        city,
+        state,
+        country,
+        active,
+      } = req.body;
 
-    res.json(site);
-  } catch (error) {
-    console.error("Error updating site:", error);
+      const existingSite = await prisma.site.findUnique({
+        where: {
+          id: siteId,
+        },
+        select: {
+          id: true,
+          organizationId: true,
+        },
+      });
 
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2002"
-    ) {
-      return res.status(409).json({
-        error: "A site with this code already exists",
+      if (!existingSite) {
+        return res.status(404).json({
+          error: "Site not found",
+        });
+      }
+
+      if (
+        !canAccessOrganization(
+          req,
+          existingSite.organizationId,
+        )
+      ) {
+        return res.status(403).json({
+          error: "Access denied for this organization",
+        });
+      }
+
+      // Solo SUPER_ADMIN puede mover un sitio
+      // entre organizaciones.
+      if (
+        organizationId !== undefined &&
+        organizationId !== existingSite.organizationId &&
+        req.user!.role !== "SUPER_ADMIN"
+      ) {
+        return res.status(403).json({
+          error: "Only SUPER_ADMIN can change site organization",
+        });
+      }
+
+      if (
+        organizationId !== undefined &&
+        !canAccessOrganization(req, organizationId)
+      ) {
+        return res.status(403).json({
+          error: "Access denied for target organization",
+        });
+      }
+
+      const site = await prisma.site.update({
+        where: {
+          id: siteId,
+        },
+        data: {
+          ...(organizationId !== undefined && {
+            organizationId,
+          }),
+          ...(name !== undefined && { name }),
+          ...(code !== undefined && { code }),
+          ...(address !== undefined && { address }),
+          ...(city !== undefined && { city }),
+          ...(state !== undefined && { state }),
+          ...(country !== undefined && { country }),
+          ...(active !== undefined && { active }),
+        },
+        include: siteInclude,
+      });
+
+      res.json(site);
+    } catch (error) {
+      console.error("Error updating site:", error);
+
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2002"
+      ) {
+        return res.status(409).json({
+          error: "A site with this code already exists",
+        });
+      }
+
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2025"
+      ) {
+        return res.status(404).json({
+          error: "Site not found",
+        });
+      }
+
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2003"
+      ) {
+        return res.status(404).json({
+          error: "Organization not found",
+        });
+      }
+
+      res.status(500).json({
+        error: "Failed to update site",
       });
     }
-
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2025"
-    ) {
-      return res.status(404).json({
-        error: "Site not found",
-      });
-    }
-
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2003"
-    ) {
-      return res.status(404).json({
-        error: "Organization not found",
-      });
-    }
-
-    res.status(500).json({ error: "Failed to update site" });
-  }
-});
+  },
+);
 
 // DELETE /sites/:id
-sitesRouter.delete("/:id", async (req, res) => {
-  try {
-    await prisma.site.delete({
-      where: {
-        id: req.params.id,
-      },
-    });
+sitesRouter.delete(
+  "/:id",
+  authenticateToken,
+  requireRole("SUPER_ADMIN", "ORG_ADMIN"),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const siteId = Array.isArray(req.params.id)
+        ? req.params.id[0]
+        : req.params.id;
 
-    res.status(204).send();
-  } catch (error) {
-    console.error("Error deleting site:", error);
+      const existingSite = await prisma.site.findUnique({
+        where: {
+          id: siteId,
+        },
+        select: {
+          id: true,
+          organizationId: true,
+        },
+      });
 
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2025"
-    ) {
-      return res.status(404).json({
-        error: "Site not found",
+      if (!existingSite) {
+        return res.status(404).json({
+          error: "Site not found",
+        });
+      }
+
+      if (
+        !canAccessOrganization(
+          req,
+          existingSite.organizationId,
+        )
+      ) {
+        return res.status(403).json({
+          error: "Access denied for this organization",
+        });
+      }
+
+      await prisma.site.delete({
+        where: {
+          id: siteId,
+        },
+      });
+
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting site:", error);
+
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2025"
+      ) {
+        return res.status(404).json({
+          error: "Site not found",
+        });
+      }
+
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2003"
+      ) {
+        return res.status(409).json({
+          error:
+            "Site cannot be deleted because it has related records",
+        });
+      }
+
+      res.status(500).json({
+        error: "Failed to delete site",
       });
     }
-
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2003"
-    ) {
-      return res.status(409).json({
-        error: "Site cannot be deleted because it has related records",
-      });
-    }
-
-    res.status(500).json({ error: "Failed to delete site" });
-  }
-});
+  },
+);
 
 export { sitesRouter };

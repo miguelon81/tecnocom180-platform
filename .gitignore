@@ -37,3 +37,10 @@ coverage/
 # Local SQLite database
 /dev.db
 /dev.db-journal
+
+# Local database backups
+*.db.backup
+*.db.backup-*
+*.db.bak
+*backup*.db
+migration_backup_*/

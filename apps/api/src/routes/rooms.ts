@@ -22,7 +22,7 @@ const roomInclude = {
 
 function canAccessOrganization(
   req: AuthenticatedRequest,
-  organizationId: string
+  organizationId: string,
 ) {
   if (!req.user) {
     return false;
@@ -40,7 +40,12 @@ function canAccessOrganization(
 roomsRouter.get(
   "/",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN", "RECEPTION", "TECHNICIAN"),
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "RECEPTION",
+    "TECHNICIAN",
+  ),
   async (req: AuthenticatedRequest, res) => {
     try {
       const requestedSiteId =
@@ -102,19 +107,28 @@ roomsRouter.get(
         error: "Failed to fetch rooms",
       });
     }
-  }
+  },
 );
 
 // GET /rooms/:id
 roomsRouter.get(
   "/:id",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN", "RECEPTION", "TECHNICIAN"),
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "RECEPTION",
+    "TECHNICIAN",
+  ),
   async (req: AuthenticatedRequest, res) => {
     try {
+      const roomId = Array.isArray(req.params.id)
+        ? req.params.id[0]
+        : req.params.id;
+
       const room = await prisma.room.findUnique({
         where: {
-          id: req.params.id as string,
+          id: roomId,
         },
         include: {
           ...roomInclude,
@@ -142,7 +156,7 @@ roomsRouter.get(
         error: "Failed to fetch room",
       });
     }
-  }
+  },
 );
 
 // POST /rooms
@@ -264,7 +278,7 @@ roomsRouter.post(
         error: "Failed to create room",
       });
     }
-  }
+  },
 );
 
 // PATCH /rooms/:id
@@ -281,7 +295,9 @@ roomsRouter.patch(
         areaId,
       } = req.body;
 
-      const roomId = req.params.id as string;
+      const roomId = Array.isArray(req.params.id)
+        ? req.params.id[0]
+        : req.params.id;
 
       const existingRoom = await prisma.room.findUnique({
         where: {
@@ -307,7 +323,7 @@ roomsRouter.patch(
       if (
         !canAccessOrganization(
           req,
-          existingRoom.site.organizationId
+          existingRoom.site.organizationId,
         )
       ) {
         return res.status(403).json({
@@ -409,7 +425,7 @@ roomsRouter.patch(
         error: "Failed to update room",
       });
     }
-  }
+  },
 );
 
 // DELETE /rooms/:id
@@ -419,7 +435,9 @@ roomsRouter.delete(
   requireRole("SUPER_ADMIN", "ORG_ADMIN"),
   async (req: AuthenticatedRequest, res) => {
     try {
-      const roomId = req.params.id as string;
+      const roomId = Array.isArray(req.params.id)
+        ? req.params.id[0]
+        : req.params.id;
 
       const existingRoom = await prisma.room.findUnique({
         where: {
@@ -444,7 +462,7 @@ roomsRouter.delete(
       if (
         !canAccessOrganization(
           req,
-          existingRoom.site.organizationId
+          existingRoom.site.organizationId,
         )
       ) {
         return res.status(403).json({
@@ -489,7 +507,7 @@ roomsRouter.delete(
         error: "Failed to delete room",
       });
     }
-  }
+  },
 );
 
 export { roomsRouter };
