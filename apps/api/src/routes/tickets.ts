@@ -22,7 +22,20 @@ const ticketInclude = {
     },
   },
   room: true,
-  assignedTo: true,
+  assignedTo: {
+  select: {
+    id: true,
+    organizationId: true,
+    name: true,
+    email: true,
+    phone: true,
+    role: true,
+    active: true,
+    lastLogin: true,
+    createdAt: true,
+    updatedAt: true,
+  },
+},
 };
 
 function canAccessOrganization(
