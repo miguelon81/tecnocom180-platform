@@ -1,4 +1,5 @@
 import { Router } from "express";
+import bcrypt from "bcryptjs";
 import { prisma } from "../lib/prisma";
 import {
   authenticateToken,
@@ -13,7 +14,7 @@ const validRoles = [
   "ORG_ADMIN",
   "RECEPTION",
   "TECHNICIAN",
-];
+] as const;
 
 const userSelect = {
   id: true,
@@ -31,7 +32,7 @@ const userSelect = {
 
 function canAccessOrganization(
   req: AuthenticatedRequest,
-  organizationId: string
+  organizationId: string,
 ) {
   if (!req.user) {
     return false;
@@ -42,6 +43,13 @@ function canAccessOrganization(
   }
 
   return req.user.organizationId === organizationId;
+}
+
+function isValidRole(role: unknown): role is (typeof validRoles)[number] {
+  return (
+    typeof role === "string" &&
+    validRoles.includes(role as (typeof validRoles)[number])
+  );
 }
 
 // ============================================================
@@ -56,7 +64,9 @@ usersRouter.get(
   async (req: AuthenticatedRequest, res) => {
     try {
       const requestedOrganizationId =
-        req.query.organizationId as string | undefined;
+        typeof req.query.organizationId === "string"
+          ? req.query.organizationId
+          : undefined;
 
       if (
         requestedOrganizationId &&
@@ -74,22 +84,24 @@ usersRouter.get(
           : req.user!.organizationId);
 
       const users = await prisma.user.findMany({
-        where: organizationId ? { organizationId } : undefined,
+        where: organizationId
+          ? { organizationId }
+          : undefined,
         select: userSelect,
         orderBy: {
           name: "asc",
         },
       });
 
-      res.json(users);
+      return res.json(users);
     } catch (error) {
       console.error("Error fetching users:", error);
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "Failed to fetch users",
       });
     }
-  }
+  },
 );
 
 // ============================================================
@@ -126,15 +138,15 @@ usersRouter.get(
         });
       }
 
-      res.json(user);
+      return res.json(user);
     } catch (error) {
       console.error("Error fetching user:", error);
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "Failed to fetch user",
       });
     }
-  }
+  },
 );
 
 // ============================================================
@@ -169,10 +181,19 @@ usersRouter.post(
         });
       }
 
-      if (!validRoles.includes(role)) {
+      if (!isValidRole(role)) {
         return res.status(400).json({
           error: "Invalid user role",
           validRoles,
+        });
+      }
+
+      if (
+        req.user!.role === "ORG_ADMIN" &&
+        role === "SUPER_ADMIN"
+      ) {
+        return res.status(403).json({
+          error: "ORG_ADMIN cannot create SUPER_ADMIN users",
         });
       }
 
@@ -182,19 +203,30 @@ usersRouter.post(
         });
       }
 
+      const normalizedEmail = String(email)
+        .trim()
+        .toLowerCase();
+
+      const password = String(passwordHash);
+
+      const hashedPassword = await bcrypt.hash(
+        password,
+        10,
+      );
+
       const user = await prisma.user.create({
         data: {
           organizationId,
-          name,
-          email,
-          passwordHash,
-          phone,
+          name: String(name).trim(),
+          email: normalizedEmail,
+          passwordHash: hashedPassword,
+          phone: phone ? String(phone).trim() : null,
           role,
         },
         select: userSelect,
       });
 
-      res.status(201).json(user);
+      return res.status(201).json(user);
     } catch (error) {
       console.error("Error creating user:", error);
 
@@ -220,11 +252,11 @@ usersRouter.post(
         });
       }
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "Failed to create user",
       });
     }
-  }
+  },
 );
 
 // ============================================================
@@ -254,7 +286,9 @@ usersRouter.patch(
           id: userId,
         },
         select: {
+          id: true,
           organizationId: true,
+          role: true,
         },
       });
 
@@ -267,7 +301,7 @@ usersRouter.patch(
       if (
         !canAccessOrganization(
           req,
-          existingUser.organizationId
+          existingUser.organizationId,
         )
       ) {
         return res.status(403).json({
@@ -275,32 +309,97 @@ usersRouter.patch(
         });
       }
 
-      if (role !== undefined && !validRoles.includes(role)) {
+      // ORG_ADMIN no puede modificar un SUPER_ADMIN.
+      if (
+        req.user!.role === "ORG_ADMIN" &&
+        existingUser.role === "SUPER_ADMIN"
+      ) {
+        return res.status(403).json({
+          error: "ORG_ADMIN cannot modify SUPER_ADMIN users",
+        });
+      }
+
+      if (role !== undefined && !isValidRole(role)) {
         return res.status(400).json({
           error: "Invalid user role",
           validRoles,
         });
       }
 
+      // ORG_ADMIN no puede asignar SUPER_ADMIN.
+      if (
+        req.user!.role === "ORG_ADMIN" &&
+        role === "SUPER_ADMIN"
+      ) {
+        return res.status(403).json({
+          error: "ORG_ADMIN cannot assign SUPER_ADMIN role",
+        });
+      }
+
+      // Un ORG_ADMIN no puede convertir otro usuario
+      // en SUPER_ADMIN ni modificar uno que ya lo sea.
+      if (
+        req.user!.role === "ORG_ADMIN" &&
+        existingUser.role === "SUPER_ADMIN"
+      ) {
+        return res.status(403).json({
+          error: "ORG_ADMIN cannot modify SUPER_ADMIN users",
+        });
+      }
+
+      const data: Record<string, unknown> = {};
+
+      if (name !== undefined) {
+        data.name = String(name).trim();
+      }
+
+      if (email !== undefined) {
+        data.email = String(email).trim().toLowerCase();
+      }
+
+      if (phone !== undefined) {
+        data.phone = phone
+          ? String(phone).trim()
+          : null;
+      }
+
+      if (role !== undefined) {
+        data.role = role;
+      }
+
+      if (active !== undefined) {
+        data.active = Boolean(active);
+      }
+
+      if (lastLogin !== undefined) {
+        data.lastLogin = new Date(lastLogin);
+      }
+
+      // ========================================================
+      // CONTRASEÑA
+      // El frontend manda la contraseña nueva en passwordHash,
+      // pero aquí la convertimos a bcrypt antes de guardarla.
+      // ========================================================
+
+      if (
+        passwordHash !== undefined &&
+        String(passwordHash).trim() !== ""
+      ) {
+        data.passwordHash = await bcrypt.hash(
+          String(passwordHash),
+          10,
+        );
+      }
+
       const user = await prisma.user.update({
         where: {
           id: userId,
         },
-        data: {
-          ...(name !== undefined && { name }),
-          ...(email !== undefined && { email }),
-          ...(passwordHash !== undefined && { passwordHash }),
-          ...(phone !== undefined && { phone }),
-          ...(role !== undefined && { role }),
-          ...(active !== undefined && { active }),
-          ...(lastLogin !== undefined && {
-            lastLogin: new Date(lastLogin),
-          }),
-        },
+        data,
         select: userSelect,
       });
 
-      res.json(user);
+      return res.json(user);
     } catch (error) {
       console.error("Error updating user:", error);
 
@@ -326,16 +425,16 @@ usersRouter.patch(
         });
       }
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "Failed to update user",
       });
     }
-  }
+  },
 );
 
 // ============================================================
 // DELETE /users/:id
-// Soft delete: preserves history
+// Soft delete
 // ============================================================
 
 usersRouter.delete(
@@ -351,7 +450,9 @@ usersRouter.delete(
           id: userId,
         },
         select: {
+          id: true,
           organizationId: true,
+          role: true,
         },
       });
 
@@ -364,11 +465,28 @@ usersRouter.delete(
       if (
         !canAccessOrganization(
           req,
-          existingUser.organizationId
+          existingUser.organizationId,
         )
       ) {
         return res.status(403).json({
           error: "Access denied for this organization",
+        });
+      }
+
+      // Nunca permitir desactivar el propio usuario.
+      if (existingUser.id === req.user!.userId) {
+        return res.status(400).json({
+          error: "You cannot deactivate your own user",
+        });
+      }
+
+      // ORG_ADMIN no puede desactivar SUPER_ADMIN.
+      if (
+        req.user!.role === "ORG_ADMIN" &&
+        existingUser.role === "SUPER_ADMIN"
+      ) {
+        return res.status(403).json({
+          error: "ORG_ADMIN cannot deactivate SUPER_ADMIN users",
         });
       }
 
@@ -382,7 +500,7 @@ usersRouter.delete(
         select: userSelect,
       });
 
-      res.json(user);
+      return res.json(user);
     } catch (error) {
       console.error("Error deactivating user:", error);
 
@@ -397,11 +515,11 @@ usersRouter.delete(
         });
       }
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "Failed to deactivate user",
       });
     }
-  }
+  },
 );
 
 export { usersRouter };

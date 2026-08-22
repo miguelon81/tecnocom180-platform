@@ -19,7 +19,7 @@ function LoginPage() {
 
     try {
       await login(email, password)
-      navigate('/sites', { replace: true })
+      navigate('/dashboard', { replace: true })
     } catch (error) {
       setError(
         error instanceof Error

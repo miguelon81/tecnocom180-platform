@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from 'react'
 import { login as apiLogin } from '../api/auth'
+import { apiFetch } from '../api/client'
 
 interface AuthUser {
   id: string
@@ -14,12 +15,14 @@ interface AuthUser {
   email: string
   phone: string | null
   role: string
+  active?: boolean
 }
 
 interface AuthContextValue {
   user: AuthUser | null
   token: string | null
   isAuthenticated: boolean
+  loading: boolean
   login: (email: string, password: string) => Promise<void>
   logout: () => void
 }
@@ -49,6 +52,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   })
 
+  const [loading, setLoading] = useState(() =>
+    Boolean(localStorage.getItem(TOKEN_KEY)),
+  )
+
   useEffect(() => {
     if (token) {
       localStorage.setItem(TOKEN_KEY, token)
@@ -64,6 +71,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem(USER_KEY)
     }
   }, [user])
+
+  useEffect(() => {
+    async function restoreSession() {
+      if (!token) {
+        setLoading(false)
+        return
+      }
+
+      try {
+        const response = await apiFetch('/auth/me')
+
+        if (!response.ok) {
+          throw new Error('Session invalid')
+        }
+
+        const currentUser = (await response.json()) as AuthUser
+
+        if (!currentUser.active) {
+          throw new Error('User inactive')
+        }
+
+        setUser(currentUser)
+      } catch {
+        setToken(null)
+        setUser(null)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    void restoreSession()
+  }, [token])
 
   async function login(email: string, password: string) {
     const result = await apiLogin(email, password)
@@ -83,6 +122,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         token,
         isAuthenticated: Boolean(token && user),
+        loading,
         login,
         logout,
       }}

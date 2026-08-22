@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react'
+﻿import { type ReactNode } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 
@@ -10,6 +10,28 @@ function AppLayout({ children }: AppLayoutProps) {
   const navigate = useNavigate()
   const { user, logout } = useAuth()
 
+  const isSuperAdmin =
+    user?.role === 'SUPER_ADMIN'
+
+  const isOrgAdmin =
+    user?.role === 'ORG_ADMIN'
+
+  const isTechnician =
+    user?.role === 'TECHNICIAN'
+
+  const canManageUsers =
+    isSuperAdmin ||
+    isOrgAdmin
+
+  const canAccessOrganizations =
+    isSuperAdmin ||
+    isOrgAdmin
+
+  const canAccessDiagnostics =
+    isSuperAdmin ||
+    isOrgAdmin ||
+    isTechnician
+
   function handleLogout() {
     logout()
     navigate('/login', { replace: true })
@@ -18,12 +40,18 @@ function AppLayout({ children }: AppLayoutProps) {
   return (
     <div className="app-shell">
       <aside className="sidebar">
+
         <div className="sidebar-brand">
           <strong>TECNOCOM180</strong>
           <span>PLATFORM</span>
         </div>
 
         <nav className="sidebar-nav">
+
+          {/* =====================================================
+              DASHBOARD
+          ===================================================== */}
+
           <NavLink
             to="/dashboard"
             className={({ isActive }) =>
@@ -33,32 +61,81 @@ function AppLayout({ children }: AppLayoutProps) {
             Dashboard
           </NavLink>
 
+          {/* =====================================================
+              ORGANIZACIÓN
+          ===================================================== */}
+
+          {canAccessOrganizations && (
+            <NavLink
+              to="/organizations"
+              className={({ isActive }) =>
+                `nav-item ${isActive ? 'nav-item-active' : ''}`
+              }
+            >
+              {isSuperAdmin
+                ? 'Organizaciones'
+                : 'Mi organización'}
+            </NavLink>
+          )}
+
+          {/* =====================================================
+              USUARIOS
+          ===================================================== */}
+
+          {canManageUsers && (
+            <NavLink
+              to="/users"
+              className={({ isActive }) =>
+                `nav-item ${isActive ? 'nav-item-active' : ''}`
+              }
+            >
+              Usuarios
+            </NavLink>
+          )}
+
+          {/* =====================================================
+              SITIOS
+          ===================================================== */}
+
           <NavLink
-  to="/sites"
-  className={({ isActive }) =>
-    `nav-item ${isActive ? 'nav-item-active' : ''}`
-  }
->
-  Sitios
-</NavLink>
+            to="/sites"
+            className={({ isActive }) =>
+              `nav-item ${isActive ? 'nav-item-active' : ''}`
+            }
+          >
+            Sitios
+          </NavLink>
 
-<NavLink
-  to="/areas"
-  className={({ isActive }) =>
-    `nav-item ${isActive ? 'nav-item-active' : ''}`
-  }
->
-  Áreas
-</NavLink>
+          {/* =====================================================
+              ÁREAS
+          ===================================================== */}
 
-<NavLink
-  to="/rooms"
-  className={({ isActive }) =>
-    `nav-item ${isActive ? 'nav-item-active' : ''}`
-  }
->
-  Habitaciones
-</NavLink>
+          <NavLink
+            to="/areas"
+            className={({ isActive }) =>
+              `nav-item ${isActive ? 'nav-item-active' : ''}`
+            }
+          >
+            Áreas
+          </NavLink>
+
+          {/* =====================================================
+              HABITACIONES
+          ===================================================== */}
+
+          <NavLink
+            to="/rooms"
+            className={({ isActive }) =>
+              `nav-item ${isActive ? 'nav-item-active' : ''}`
+            }
+          >
+            Habitaciones
+          </NavLink>
+
+          {/* =====================================================
+              DISPOSITIVOS
+          ===================================================== */}
+
           <NavLink
             to="/devices"
             className={({ isActive }) =>
@@ -67,6 +144,10 @@ function AppLayout({ children }: AppLayoutProps) {
           >
             Dispositivos
           </NavLink>
+
+          {/* =====================================================
+              TICKETS
+          ===================================================== */}
 
           <NavLink
             to="/tickets"
@@ -77,34 +158,58 @@ function AppLayout({ children }: AppLayoutProps) {
             Tickets
           </NavLink>
 
-          <NavLink
-            to="/diagnostics"
-            className={({ isActive }) =>
-              `nav-item ${isActive ? 'nav-item-active' : ''}`
-            }
-          >
-            Diagnósticos
-          </NavLink>
+          {/* =====================================================
+              DIAGNÓSTICOS
+              SUPER_ADMIN
+              ORG_ADMIN
+              TECHNICIAN
+
+              RECEPTION NO TIENE ACCESO
+          ===================================================== */}
+
+          {canAccessDiagnostics && (
+            <NavLink
+              to="/diagnostics"
+              className={({ isActive }) =>
+                `nav-item ${isActive ? 'nav-item-active' : ''}`
+              }
+            >
+              Diagnósticos
+            </NavLink>
+          )}
+
         </nav>
 
         <div className="sidebar-footer">
+
           <div className="user-info">
             <strong>{user?.name}</strong>
             <span>{user?.role}</span>
           </div>
 
-          <button type="button" onClick={handleLogout}>
+          <button
+            type="button"
+            onClick={handleLogout}
+          >
             Cerrar sesión
           </button>
+
         </div>
+
       </aside>
 
       <div className="app-main">
+
         <header className="topbar">
-          <span>Plataforma de gestión tecnológica</span>
+          <span>
+            Plataforma de gestión tecnológica
+          </span>
         </header>
 
-        <main className="app-content">{children}</main>
+        <main className="app-content">
+          {children}
+        </main>
+
       </div>
     </div>
   )

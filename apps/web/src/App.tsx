@@ -16,6 +16,8 @@ import DevicesPage from './pages/DevicesPage'
 import TicketsPage from './pages/TicketsPage'
 import DiagnosticsPage from './pages/DiagnosticsPage'
 import AreasPage from './pages/AreasPage'
+import OrganizationsPage from './pages/OrganizationsPage'
+import UsersPage from './pages/UsersPage'
 
 
 import './App.css'
@@ -55,6 +57,56 @@ function App() {
             )
           }
         />
+
+$path = '.\apps\web\src\App.tsx'
+
+$content = Get-Content $path -Raw
+
+$marker = @'
+        {/* =====================================================
+            SITES
+        ===================================================== */}
+'@
+
+$route = @'
+        {/* =====================================================
+            ORGANIZATIONS
+        ===================================================== */}
+        <Route
+          path="/organizations"
+          element={
+            isAuthenticated ? (
+              <AppLayout>
+                <OrganizationsPage />
+              </AppLayout>
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+
+'@
+
+$content = $content.Replace($marker, $route + $marker)
+
+Set-Content $path $content -Encoding utf8
+
+        {/* =====================================================
+            USERS
+        ===================================================== */}
+        <Route
+          path="/users"
+          element={
+            isAuthenticated ? (
+              <AppLayout>
+                <UsersPage />
+              </AppLayout>
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+
 
         {/* =====================================================
             SITES

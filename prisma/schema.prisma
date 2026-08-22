@@ -390,19 +390,15 @@ model DiagnosticResult {
 
   diagnosticRun DiagnosticRun @relation(fields: [diagnosticRunId], references: [id])
 
-  pingMs Float?
-
+  pingMs       Float?
   downloadMbps Float?
+  uploadMbps   Float?
+  packetLoss   Float?
+  gateway      String?
+  dns          String?
+  internet     Boolean?
 
-  uploadMbps Float?
-
-  packetLoss Float?
-
-  gateway String?
-
-  dns String?
-
-  internet Boolean?
+  rawResult Json?
 }
 
 // =====================

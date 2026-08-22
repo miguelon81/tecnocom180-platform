@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
   createSite,
@@ -8,6 +8,7 @@ import {
 } from '../api/sites'
 import type { CreateSiteInput, UpdateSiteInput } from '../api/sites'
 import type { Site } from '../types/site'
+import { useAuth } from '../auth/AuthContext'
 
 type SiteForm = {
   organizationId: string
@@ -42,6 +43,11 @@ function SitesPage() {
   const [editingSite, setEditingSite] = useState<Site | null>(null)
   const [form, setForm] = useState<SiteForm>(emptyForm)
 
+const { user: currentUser } = useAuth()
+
+const isSuperAdmin =
+  currentUser?.role === 'SUPER_ADMIN'
+
   async function loadSites() {
     try {
       setLoading(true)
@@ -64,12 +70,18 @@ function SitesPage() {
     loadSites()
   }, [])
 
-  function openCreateForm() {
-    setEditingSite(null)
-    setForm(emptyForm)
-    setFormError(null)
-    setShowForm(true)
-  }
+function openCreateForm() {
+  setEditingSite(null)
+
+  setForm({
+    ...emptyForm,
+    organizationId:
+      currentUser?.organizationId ?? '',
+  })
+
+  setFormError(null)
+  setShowForm(true)
+}  
 
   function openEditForm(site: Site) {
     setEditingSite(site)
@@ -111,10 +123,15 @@ function SitesPage() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
-    if (!form.organizationId.trim()) {
-      setFormError('La organización es obligatoria')
-      return
-    }
+   if (
+  !isSuperAdmin &&
+  currentUser?.organizationId !== form.organizationId
+) {
+  setFormError(
+    'No puedes crear un sitio fuera de tu organización',
+  )
+  return
+}
 
     if (!form.name.trim()) {
       setFormError('El nombre del sitio es obligatorio')
@@ -254,18 +271,6 @@ function SitesPage() {
         <p>Cargando sitios...</p>
       </main>
     )
-console.log(
-  'SITES STATE ANTES DEL RENDER:',
-  sites.map((site) => ({
-    id: site.id,
-    name: site.name,
-    hasDevices: Object.prototype.hasOwnProperty.call(
-      site,
-      'devices',
-    ),
-    devices: site.devices,
-  })),
-)
   }
 
   return (
@@ -363,7 +368,8 @@ console.log(
                 gap: '16px',
               }}
             >
-              {!editingSite && (
+         
+              {!editingSite && isSuperAdmin && (
                 <label>
                   Organización
                   <input
@@ -524,14 +530,7 @@ console.log(
 
       <section className="sites-grid">
         {sites.map((site) => {
-        console.log(
-  'RENDER SITE:',
-  site.id,
-  site.name,
-  'devices:',
-  site.devices,
-)
-
+        
 const onlineDevices =
   site.devices.filter(
     (device) => device.online,

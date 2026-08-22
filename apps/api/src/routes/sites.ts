@@ -132,31 +132,49 @@ sitesRouter.post(
         active,
       } = req.body;
 
-      if (!organizationId || !name || !code) {
+      if (!name || !code) {
         return res.status(400).json({
-          error: "organizationId, name and code are required",
+          error: "name and code are required",
         });
       }
 
-      if (!canAccessOrganization(req, organizationId)) {
+      // SUPER_ADMIN puede elegir la organización.
+      // ORG_ADMIN siempre queda limitado a su propia organización.
+      const targetOrganizationId =
+        req.user!.role === "SUPER_ADMIN"
+          ? organizationId
+          : req.user!.organizationId;
+
+      if (!targetOrganizationId) {
+        return res.status(400).json({
+          error: "organizationId is required",
+        });
+      }
+
+      if (
+        !canAccessOrganization(
+          req,
+          targetOrganizationId,
+        )
+      ) {
         return res.status(403).json({
           error: "Access denied for this organization",
         });
       }
 
       const site = await prisma.site.create({
-       data: {
-        organizationId,
-        name,
-        code,
-        address,
-        city,
-        state,
-        country,
-        ...(active !== undefined && { active }),
-       },
-       include: siteInclude,
-     });
+        data: {
+          organizationId: targetOrganizationId,
+          name,
+          code,
+          address,
+          city,
+          state,
+          country,
+          ...(active !== undefined && { active }),
+        },
+        include: siteInclude,
+      });
 
       res.status(201).json(site);
     } catch (error) {

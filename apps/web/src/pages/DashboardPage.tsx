@@ -1,69 +1,81 @@
 import { useEffect, useState } from 'react'
+import { getSites } from '../api/sites'
+import type {
+  Room,
+  Site,
+  Device,
+  RoomStatus,
+} from '../types/site'
 import { apiFetch } from '../api/client'
 
-type DashboardData = {
-  sites: number
-  rooms: number
-  devices: number
-  tickets: number
+type Ticket = {
+  id: string
+  status?: string | null
 }
 
-async function getCount(path: string): Promise<number> {
-  const response = await apiFetch(path)
+type DashboardData = {
+  sites: Site[]
+  rooms: Room[]
+  devices: Device[]
+  tickets: Ticket[]
+}
 
-  if (!response.ok) {
-    throw new Error(`Error HTTP ${response.status}`)
-  }
-
-  const data = await response.json()
-
-  if (Array.isArray(data)) {
-    return data.length
-  }
-
-  if (Array.isArray(data.value)) {
-    return data.value.length
-  }
-
-  return 0
+const initialData: DashboardData = {
+  sites: [],
+  rooms: [],
+  devices: [],
+  tickets: [],
 }
 
 function DashboardPage() {
-  const [data, setData] = useState<DashboardData>({
-    sites: 0,
-    rooms: 0,
-    devices: 0,
-    tickets: 0,
-  })
+  const [data, setData] =
+    useState<DashboardData>(initialData)
 
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] =
+    useState<string | null>(null)
 
   async function loadDashboard() {
     try {
       setLoading(true)
       setError(null)
 
-      const [
-        sitesCount,
-        roomsCount,
-        devicesCount,
-        ticketsCount,
-      ] = await Promise.all([
-        getCount('/sites'),
-        getCount('/rooms'),
-        getCount('/devices'),
-        getCount('/tickets'),
-      ])
+      const [sites, ticketsResponse] =
+        await Promise.all([
+          getSites(),
+          apiFetch('/tickets'),
+        ])
+
+      if (!ticketsResponse.ok) {
+        throw new Error(
+          `Error HTTP ${ticketsResponse.status}`,
+        )
+      }
+
+      const ticketsData =
+        await ticketsResponse.json()
+
+      const rooms = sites.flatMap(
+        (site) => site.rooms,
+      )
+
+      const devices = sites.flatMap(
+        (site) => site.devices,
+      )
 
       setData({
-        sites: sitesCount,
-        rooms: roomsCount,
-        devices: devicesCount,
-        tickets: ticketsCount,
+        sites,
+        rooms,
+        devices,
+        tickets: Array.isArray(ticketsData)
+          ? ticketsData
+          : [],
       })
     } catch (err) {
-      console.error('Error loading dashboard:', err)
+      console.error(
+        'Error loading dashboard:',
+        err,
+      )
 
       setError(
         err instanceof Error
@@ -79,16 +91,66 @@ function DashboardPage() {
     loadDashboard()
   }, [])
 
+  const onlineDevices =
+    data.devices.filter(
+      (device: Device) => device.online,
+    ).length
+
+  const offlineDevices =
+    data.devices.length - onlineDevices
+
+  function countRoomsByStatus(
+    status: RoomStatus,
+  ) {
+    return data.rooms.filter(
+      (room: Room) =>
+        room.status === status,
+    ).length
+  }
+
+  const availableRooms =
+    countRoomsByStatus('AVAILABLE')
+
+  const occupiedRooms =
+    countRoomsByStatus('OCCUPIED')
+
+  const maintenanceRooms =
+    countRoomsByStatus('MAINTENANCE')
+
+  const cleaningRooms =
+    countRoomsByStatus('CLEANING')
+
+  const openTickets =
+    data.tickets.filter(
+      (ticket) =>
+        ticket.status === 'OPEN',
+    ).length
+
+  const inProgressTickets =
+    data.tickets.filter(
+      (ticket) =>
+        ticket.status === 'IN_PROGRESS',
+    ).length
+
+  const resolvedTickets =
+    data.tickets.filter(
+      (ticket) =>
+        ticket.status === 'RESOLVED',
+    ).length
+
   return (
     <div className="page">
       <header className="page-header">
         <div>
-          <p className="eyebrow">TECNOCOM180 PLATFORM</p>
+          <p className="eyebrow">
+            TECNOCOM180 PLATFORM
+          </p>
 
           <h1>Dashboard</h1>
 
           <p className="subtitle">
-            Resumen general de la infraestructura tecnológica.
+            Resumen general de la
+            infraestructura tecnológica.
           </p>
         </div>
       </header>
@@ -99,19 +161,26 @@ function DashboardPage() {
             marginBottom: '20px',
             padding: '12px 16px',
             borderRadius: '8px',
-            border: '1px solid #dc2626',
+            border:
+              '1px solid #dc2626',
           }}
         >
           {error}
         </div>
       )}
 
+      {/* =====================================================
+          RESUMEN GENERAL
+      ===================================================== */}
+
       <section className="dashboard-grid">
         <article className="dashboard-card">
-          <span className="dashboard-label">Sitios</span>
+          <span className="dashboard-label">
+            Sitios
+          </span>
 
           <strong>
-            {loading ? '—' : data.sites}
+            {loading ? '—' : data.sites.length}
           </strong>
 
           <small>
@@ -125,7 +194,7 @@ function DashboardPage() {
           </span>
 
           <strong>
-            {loading ? '—' : data.rooms}
+            {loading ? '—' : data.rooms.length}
           </strong>
 
           <small>
@@ -139,7 +208,9 @@ function DashboardPage() {
           </span>
 
           <strong>
-            {loading ? '—' : data.devices}
+            {loading
+              ? '—'
+              : data.devices.length}
           </strong>
 
           <small>
@@ -153,36 +224,179 @@ function DashboardPage() {
           </span>
 
           <strong>
-            {loading ? '—' : data.tickets}
+            {loading
+              ? '—'
+              : data.tickets.length}
           </strong>
 
           <small>
-            Tickets registrados
+            Incidencias registradas
           </small>
         </article>
       </section>
 
+      {/* =====================================================
+          OPERACIÓN
+      ===================================================== */}
+
       <section className="dashboard-section">
         <div>
-          <p className="eyebrow">OPERACIÓN</p>
+          <p className="eyebrow">
+            OPERACIÓN
+          </p>
 
-          <h2>Estado de la plataforma</h2>
+          <h2>
+            Estado de dispositivos
+          </h2>
         </div>
 
         <div className="dashboard-status-grid">
           <div className="status-panel">
             <span className="dot dot-online" />
-            API operativa
+
+            <strong>
+              {loading
+                ? '—'
+                : onlineDevices}
+            </strong>
+
+            <span>
+              dispositivos online
+            </span>
           </div>
 
           <div className="status-panel">
-            <span className="dot dot-online" />
-            Base de datos operativa
+            <span className="dot dot-offline" />
+
+            <strong>
+              {loading
+                ? '—'
+                : offlineDevices}
+            </strong>
+
+            <span>
+              dispositivos offline
+            </span>
+          </div>
+        </div>
+      </section>
+
+      {/* =====================================================
+          HABITACIONES
+      ===================================================== */}
+
+      <section className="dashboard-section">
+        <div>
+          <p className="eyebrow">
+            HABITACIONES
+          </p>
+
+          <h2>
+            Estado de habitaciones
+          </h2>
+        </div>
+
+        <div className="dashboard-status-grid">
+          <div className="status-panel">
+            <strong>
+              {loading
+                ? '—'
+                : availableRooms}
+            </strong>
+
+            <span>
+              Disponibles
+            </span>
           </div>
 
           <div className="status-panel">
-            <span className="dot dot-online" />
-            Autenticación operativa
+            <strong>
+              {loading
+                ? '—'
+                : occupiedRooms}
+            </strong>
+
+            <span>
+              Ocupadas
+            </span>
+          </div>
+
+          <div className="status-panel">
+            <strong>
+              {loading
+                ? '—'
+                : cleaningRooms}
+            </strong>
+
+            <span>
+              Limpieza
+            </span>
+          </div>
+
+          <div className="status-panel">
+            <strong>
+              {loading
+                ? '—'
+                : maintenanceRooms}
+            </strong>
+
+            <span>
+              Mantenimiento
+            </span>
+          </div>
+        </div>
+      </section>
+
+      {/* =====================================================
+          TICKETS
+      ===================================================== */}
+
+      <section className="dashboard-section">
+        <div>
+          <p className="eyebrow">
+            INCIDENCIAS
+          </p>
+
+          <h2>
+            Estado de tickets
+          </h2>
+        </div>
+
+        <div className="dashboard-status-grid">
+          <div className="status-panel">
+            <strong>
+              {loading
+                ? '—'
+                : openTickets}
+            </strong>
+
+            <span>
+              Abiertos
+            </span>
+          </div>
+
+          <div className="status-panel">
+            <strong>
+              {loading
+                ? '—'
+                : inProgressTickets}
+            </strong>
+
+            <span>
+              En proceso
+            </span>
+          </div>
+
+          <div className="status-panel">
+            <strong>
+              {loading
+                ? '—'
+                : resolvedTickets}
+            </strong>
+
+            <span>
+              Resueltos
+            </span>
           </div>
         </div>
       </section>
