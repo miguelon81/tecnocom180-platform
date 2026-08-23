@@ -1,4 +1,4 @@
-import {
+﻿import {
   BrowserRouter,
   Navigate,
   Route,
@@ -58,38 +58,6 @@ function App() {
           }
         />
 
-$path = '.\apps\web\src\App.tsx'
-
-$content = Get-Content $path -Raw
-
-$marker = @'
-        {/* =====================================================
-            SITES
-        ===================================================== */}
-'@
-
-$route = @'
-        {/* =====================================================
-            ORGANIZATIONS
-        ===================================================== */}
-        <Route
-          path="/organizations"
-          element={
-            isAuthenticated ? (
-              <AppLayout>
-                <OrganizationsPage />
-              </AppLayout>
-            ) : (
-              <Navigate to="/login" replace />
-            )
-          }
-        />
-
-'@
-
-$content = $content.Replace($marker, $route + $marker)
-
-Set-Content $path $content -Encoding utf8
 
         {/* =====================================================
             USERS
@@ -107,6 +75,22 @@ Set-Content $path $content -Encoding utf8
           }
         />
 
+
+        {/* =====================================================
+            ORGANIZATIONS
+        ===================================================== */}
+        <Route
+          path="/organizations"
+          element={
+            isAuthenticated ? (
+              <AppLayout>
+                <OrganizationsPage />
+              </AppLayout>
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
 
         {/* =====================================================
             SITES
@@ -232,3 +216,7 @@ Set-Content $path $content -Encoding utf8
 }
 
 export default App
+
+
+
+
