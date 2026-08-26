@@ -56,6 +56,13 @@ enum TicketType {
   OTHER
 }
 
+enum TicketSource {
+  QR_GUEST
+  MANUAL
+  API
+  AUTOMATIC
+}
+
 enum DiagnosticStatus {
   RUNNING
   SUCCESS
@@ -339,6 +346,8 @@ model Ticket {
   assignedTo User? @relation(fields: [assignedToId], references: [id])
 
   type TicketType
+
+  source TicketSource @default(MANUAL)
 
   status TicketStatus @default(OPEN)
 

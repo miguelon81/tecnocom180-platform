@@ -1,4 +1,4 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import {
   authenticateToken,
@@ -23,20 +23,44 @@ const ticketInclude = {
   },
   room: true,
   assignedTo: {
-  select: {
-    id: true,
-    organizationId: true,
-    name: true,
-    email: true,
-    phone: true,
-    role: true,
-    active: true,
-    lastLogin: true,
-    createdAt: true,
-    updatedAt: true,
+    select: {
+      id: true,
+      organizationId: true,
+      name: true,
+      email: true,
+      phone: true,
+      role: true,
+      active: true,
+      lastLogin: true,
+      createdAt: true,
+      updatedAt: true,
+    },
   },
-},
 };
+
+const validStatuses = [
+  "OPEN",
+  "PENDING",
+  "IN_PROGRESS",
+  "RESOLVED",
+  "CLOSED",
+] as const;
+
+const validTypes = [
+  "WIFI",
+  "INTERNET",
+  "TV",
+  "CAMERA",
+  "NETWORK",
+  "OTHER",
+] as const;
+
+const validSources = [
+  "QR_GUEST",
+  "MANUAL",
+  "API",
+  "AUTOMATIC",
+] as const;
 
 function canAccessOrganization(
   req: AuthenticatedRequest,
@@ -53,13 +77,10 @@ function canAccessOrganization(
   return req.user.organizationId === organizationId;
 }
 
+// =====================================================
 // GET /tickets
-// GET /tickets?siteId=xxx
-// GET /tickets?areaId=xxx
-// GET /tickets?roomId=xxx
-// GET /tickets?deviceId=xxx
-// GET /tickets?status=OPEN
-// GET /tickets?type=WIFI
+// =====================================================
+
 ticketsRouter.get(
   "/",
   authenticateToken,
@@ -77,8 +98,13 @@ ticketsRouter.get(
       const deviceId = req.query.deviceId as string | undefined;
       const status = req.query.status as string | undefined;
       const type = req.query.type as string | undefined;
+      const source = req.query.source as string | undefined;
 
       let organizationId: string | undefined;
+
+      // ---------------------------------------------
+      // SITE
+      // ---------------------------------------------
 
       if (siteId) {
         const site = await prisma.site.findUnique({
@@ -106,6 +132,10 @@ ticketsRouter.get(
       } else if (req.user!.role !== "SUPER_ADMIN") {
         organizationId = req.user!.organizationId;
       }
+
+      // ---------------------------------------------
+      // AREA
+      // ---------------------------------------------
 
       if (areaId) {
         const area = await prisma.area.findUnique({
@@ -143,6 +173,10 @@ ticketsRouter.get(
         organizationId ??= area.site.organizationId;
       }
 
+      // ---------------------------------------------
+      // ROOM
+      // ---------------------------------------------
+
       if (roomId) {
         const room = await prisma.room.findUnique({
           where: {
@@ -171,6 +205,10 @@ ticketsRouter.get(
 
         organizationId ??= room.site.organizationId;
       }
+
+      // ---------------------------------------------
+      // DEVICE
+      // ---------------------------------------------
 
       if (deviceId) {
         const device = await prisma.device.findUnique({
@@ -201,73 +239,87 @@ ticketsRouter.get(
         organizationId ??= device.site.organizationId;
       }
 
-      const validStatuses = [
-        "OPEN",
-        "PENDING",
-        "IN_PROGRESS",
-        "RESOLVED",
-        "CLOSED",
-      ];
+      // ---------------------------------------------
+      // VALIDACIONES
+      // ---------------------------------------------
 
-      const validTypes = [
-        "WIFI",
-        "INTERNET",
-        "TV",
-        "CAMERA",
-        "NETWORK",
-        "OTHER",
-      ];
-
-      if (status && !validStatuses.includes(status)) {
+      if (
+        status &&
+        !validStatuses.includes(
+          status as (typeof validStatuses)[number]
+        )
+      ) {
         return res.status(400).json({
           error: "Invalid ticket status",
           validStatuses,
         });
       }
 
-      if (type && !validTypes.includes(type)) {
+      if (
+        type &&
+        !validTypes.includes(
+          type as (typeof validTypes)[number]
+        )
+      ) {
         return res.status(400).json({
           error: "Invalid ticket type",
           validTypes,
         });
       }
 
+      if (
+        source &&
+        !validSources.includes(
+          source as (typeof validSources)[number]
+        )
+      ) {
+        return res.status(400).json({
+          error: "Invalid ticket source",
+          validSources,
+        });
+      }
+
+      // ---------------------------------------------
+      // QUERY
+      // ---------------------------------------------
+
       const tickets = await prisma.ticket.findMany({
         where: {
           ...(organizationId && {
             organizationId,
           }),
+
           ...(siteId && {
             siteId,
           }),
+
           ...(areaId && {
             areaId,
           }),
+
           ...(roomId && {
             roomId,
           }),
+
           ...(deviceId && {
             deviceId,
           }),
+
           ...(status && {
-            status: status as
-              | "OPEN"
-              | "PENDING"
-              | "IN_PROGRESS"
-              | "RESOLVED"
-              | "CLOSED",
+            status: status as (typeof validStatuses)[number],
           }),
+
           ...(type && {
-            type: type as
-              | "WIFI"
-              | "INTERNET"
-              | "TV"
-              | "CAMERA"
-              | "NETWORK"
-              | "OTHER",
+            type: type as (typeof validTypes)[number],
+          }),
+
+          ...(source && {
+            source: source as (typeof validSources)[number],
           }),
         },
+
         include: ticketInclude,
+
         orderBy: {
           createdAt: "desc",
         },
@@ -284,7 +336,10 @@ ticketsRouter.get(
   }
 );
 
+// =====================================================
 // GET /tickets/:id
+// =====================================================
+
 ticketsRouter.get(
   "/:id",
   authenticateToken,
@@ -326,7 +381,10 @@ ticketsRouter.get(
   }
 );
 
+// =====================================================
 // POST /tickets
+// =====================================================
+
 ticketsRouter.post(
   "/",
   authenticateToken,
@@ -346,9 +404,14 @@ ticketsRouter.post(
         roomId,
         assignedToId,
         type,
+        source,
         title,
         description,
       } = req.body;
+
+      // ---------------------------------------------
+      // REQUIRED
+      // ---------------------------------------------
 
       if (!organizationId || !type || !title) {
         return res.status(400).json({
@@ -356,27 +419,52 @@ ticketsRouter.post(
         });
       }
 
+      // ---------------------------------------------
+      // ORGANIZATION ACCESS
+      // ---------------------------------------------
+
       if (!canAccessOrganization(req, organizationId)) {
         return res.status(403).json({
           error: "Access denied for this organization",
         });
       }
 
-      const validTypes = [
-        "WIFI",
-        "INTERNET",
-        "TV",
-        "CAMERA",
-        "NETWORK",
-        "OTHER",
-      ];
+      // ---------------------------------------------
+      // TYPE
+      // ---------------------------------------------
 
-      if (!validTypes.includes(type)) {
+      if (
+        !validTypes.includes(
+          type as (typeof validTypes)[number]
+        )
+      ) {
         return res.status(400).json({
           error: "Invalid ticket type",
           validTypes,
         });
       }
+
+      // ---------------------------------------------
+      // SOURCE
+      //
+      // Si no se manda, Prisma utiliza MANUAL
+      // ---------------------------------------------
+
+      if (
+        source !== undefined &&
+        !validSources.includes(
+          source as (typeof validSources)[number]
+        )
+      ) {
+        return res.status(400).json({
+          error: "Invalid ticket source",
+          validSources,
+        });
+      }
+
+      // ---------------------------------------------
+      // SITE
+      // ---------------------------------------------
 
       if (siteId) {
         const site = await prisma.site.findUnique({
@@ -396,10 +484,15 @@ ticketsRouter.post(
 
         if (site.organizationId !== organizationId) {
           return res.status(400).json({
-            error: "Site does not belong to the specified organization",
+            error:
+              "Site does not belong to the specified organization",
           });
         }
       }
+
+      // ---------------------------------------------
+      // AREA
+      // ---------------------------------------------
 
       if (areaId) {
         const area = await prisma.area.findUnique({
@@ -408,6 +501,11 @@ ticketsRouter.post(
           },
           select: {
             siteId: true,
+            site: {
+              select: {
+                organizationId: true,
+              },
+            },
           },
         });
 
@@ -417,12 +515,24 @@ ticketsRouter.post(
           });
         }
 
+        if (area.site.organizationId !== organizationId) {
+          return res.status(400).json({
+            error:
+              "Area does not belong to the specified organization",
+          });
+        }
+
         if (siteId && area.siteId !== siteId) {
           return res.status(400).json({
-            error: "Area does not belong to the specified site",
+            error:
+              "Area does not belong to the specified site",
           });
         }
       }
+
+      // ---------------------------------------------
+      // DEVICE
+      // ---------------------------------------------
 
       if (deviceId) {
         const device = await prisma.device.findUnique({
@@ -446,10 +556,15 @@ ticketsRouter.post(
 
         if (device.site.organizationId !== organizationId) {
           return res.status(400).json({
-            error: "Device does not belong to the specified organization",
+            error:
+              "Device does not belong to the specified organization",
           });
         }
       }
+
+      // ---------------------------------------------
+      // ROOM
+      // ---------------------------------------------
 
       if (roomId) {
         const room = await prisma.room.findUnique({
@@ -473,10 +588,15 @@ ticketsRouter.post(
 
         if (room.site.organizationId !== organizationId) {
           return res.status(400).json({
-            error: "Room does not belong to the specified organization",
+            error:
+              "Room does not belong to the specified organization",
           });
         }
       }
+
+      // ---------------------------------------------
+      // ASSIGNED USER
+      // ---------------------------------------------
 
       if (assignedToId) {
         const user = await prisma.user.findUnique({
@@ -496,10 +616,15 @@ ticketsRouter.post(
 
         if (user.organizationId !== organizationId) {
           return res.status(400).json({
-            error: "Assigned user does not belong to the specified organization",
+            error:
+              "Assigned user does not belong to the specified organization",
           });
         }
       }
+
+      // ---------------------------------------------
+      // CREATE TICKET
+      // ---------------------------------------------
 
       const ticket = await prisma.ticket.create({
         data: {
@@ -509,10 +634,16 @@ ticketsRouter.post(
           deviceId: deviceId ?? null,
           roomId: roomId ?? null,
           assignedToId: assignedToId ?? null,
+
           type,
+
+          // Si source viene vacío, Prisma usa MANUAL
+          source: source ?? "MANUAL",
+
           title,
-          description,
+          description: description ?? null,
         },
+
         include: ticketInclude,
       });
 
@@ -538,7 +669,10 @@ ticketsRouter.post(
   }
 );
 
+// =====================================================
 // PATCH /tickets/:id
+// =====================================================
+
 ticketsRouter.patch(
   "/:id",
   authenticateToken,
@@ -586,17 +720,15 @@ ticketsRouter.patch(
         });
       }
 
-      const validStatuses = [
-        "OPEN",
-        "PENDING",
-        "IN_PROGRESS",
-        "RESOLVED",
-        "CLOSED",
-      ];
+      // ---------------------------------------------
+      // STATUS
+      // ---------------------------------------------
 
       if (
         status !== undefined &&
-        !validStatuses.includes(status)
+        !validStatuses.includes(
+          status as (typeof validStatuses)[number]
+        )
       ) {
         return res.status(400).json({
           error: "Invalid ticket status",
@@ -604,7 +736,14 @@ ticketsRouter.patch(
         });
       }
 
-      if (assignedToId !== undefined && assignedToId !== null) {
+      // ---------------------------------------------
+      // ASSIGNED USER
+      // ---------------------------------------------
+
+      if (
+        assignedToId !== undefined &&
+        assignedToId !== null
+      ) {
         const user = await prisma.user.findUnique({
           where: {
             id: assignedToId,
@@ -625,25 +764,39 @@ ticketsRouter.patch(
           existingTicket.organizationId
         ) {
           return res.status(400).json({
-            error: "Assigned user does not belong to the ticket organization",
+            error:
+              "Assigned user does not belong to the ticket organization",
           });
         }
       }
+
+      // ---------------------------------------------
+      // UPDATE
+      // ---------------------------------------------
 
       const ticket = await prisma.ticket.update({
         where: {
           id: ticketId,
         },
+
         data: {
-          ...(status !== undefined && { status }),
+          ...(status !== undefined && {
+            status,
+          }),
+
           ...(assignedToId !== undefined && {
             assignedToId: assignedToId ?? null,
           }),
-          ...(title !== undefined && { title }),
+
+          ...(title !== undefined && {
+            title,
+          }),
+
           ...(description !== undefined && {
             description,
           }),
         },
+
         include: ticketInclude,
       });
 
@@ -680,7 +833,10 @@ ticketsRouter.patch(
   }
 );
 
+// =====================================================
 // DELETE /tickets/:id
+// =====================================================
+
 ticketsRouter.delete(
   "/:id",
   authenticateToken,
