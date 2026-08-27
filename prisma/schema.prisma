@@ -14,6 +14,7 @@ datasource db {
 enum UserRole {
   SUPER_ADMIN
   ORG_ADMIN
+  OPERATIONS
   RECEPTION
   TECHNICIAN
 }
@@ -131,6 +132,7 @@ model User {
   updatedAt DateTime @updatedAt
 
   assignedTickets Ticket[]
+  ticketComments  TicketComment[]
 
   @@index([organizationId])
 }
@@ -359,11 +361,36 @@ model Ticket {
 
   updatedAt DateTime @updatedAt
 
+  comments TicketComment[]
+
   @@index([organizationId])
   @@index([siteId])
   @@index([areaId])
   @@index([deviceId])
   @@index([roomId])
+}
+
+// =====================
+// TICKET COMMENTS
+// =====================
+
+model TicketComment {
+  id String @id @default(uuid())
+
+  ticketId String
+
+  ticket Ticket @relation(fields: [ticketId], references: [id])
+
+  userId String
+
+  user User @relation(fields: [userId], references: [id])
+
+  comment String
+
+  createdAt DateTime @default(now())
+
+  @@index([ticketId])
+  @@index([userId])
 }
 
 // =====================
