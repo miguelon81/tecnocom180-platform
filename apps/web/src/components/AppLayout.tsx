@@ -16,6 +16,9 @@ function AppLayout({ children }: AppLayoutProps) {
   const isOrgAdmin =
     user?.role === 'ORG_ADMIN'
 
+  const isOperations =
+    user?.role === 'OPERATIONS'
+
   const isTechnician =
     user?.role === 'TECHNICIAN'
 
@@ -30,6 +33,7 @@ function AppLayout({ children }: AppLayoutProps) {
   const canAccessDiagnostics =
     isSuperAdmin ||
     isOrgAdmin ||
+    isOperations ||
     isTechnician
 
   function handleLogout() {
@@ -63,6 +67,7 @@ function AppLayout({ children }: AppLayoutProps) {
 
           {/* =====================================================
               ORGANIZACIÓN
+              SUPER_ADMIN / ORG_ADMIN
           ===================================================== */}
 
           {canAccessOrganizations && (
@@ -80,6 +85,7 @@ function AppLayout({ children }: AppLayoutProps) {
 
           {/* =====================================================
               USUARIOS
+              SUPER_ADMIN / ORG_ADMIN
           ===================================================== */}
 
           {canManageUsers && (
@@ -95,6 +101,7 @@ function AppLayout({ children }: AppLayoutProps) {
 
           {/* =====================================================
               SITIOS
+              OPERACIÓN
           ===================================================== */}
 
           <NavLink
@@ -108,6 +115,7 @@ function AppLayout({ children }: AppLayoutProps) {
 
           {/* =====================================================
               ÁREAS
+              OPERACIÓN
           ===================================================== */}
 
           <NavLink
@@ -121,6 +129,7 @@ function AppLayout({ children }: AppLayoutProps) {
 
           {/* =====================================================
               HABITACIONES
+              OPERACIÓN
           ===================================================== */}
 
           <NavLink
@@ -134,6 +143,7 @@ function AppLayout({ children }: AppLayoutProps) {
 
           {/* =====================================================
               DISPOSITIVOS
+              OPERACIÓN TÉCNICA
           ===================================================== */}
 
           <NavLink
@@ -162,6 +172,7 @@ function AppLayout({ children }: AppLayoutProps) {
               DIAGNÓSTICOS
               SUPER_ADMIN
               ORG_ADMIN
+              OPERATIONS
               TECHNICIAN
 
               RECEPTION NO TIENE ACCESO

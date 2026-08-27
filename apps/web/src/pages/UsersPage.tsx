@@ -33,6 +33,7 @@ const emptyForm: UserForm = {
 const roleLabels: Record<UserRole, string> = {
   SUPER_ADMIN: 'Super Admin',
   ORG_ADMIN: 'Administrador',
+  OPERATIONS: 'Operaciones',
   RECEPTION: 'Recepción',
   TECHNICIAN: 'Técnico',
 }
@@ -434,6 +435,10 @@ function UsersPage() {
 
                   <option value="ORG_ADMIN">
                     Administrador
+                  </option>
+
+                  <option value="OPERATIONS">
+                    Operaciones
                   </option>
 
                   <option value="RECEPTION">

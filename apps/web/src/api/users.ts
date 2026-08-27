@@ -3,8 +3,15 @@
 export type UserRole =
   | 'SUPER_ADMIN'
   | 'ORG_ADMIN'
+  | 'OPERATIONS'
   | 'RECEPTION'
   | 'TECHNICIAN'
+
+export type OrganizationSummary = {
+  id: string
+  name: string
+  slug?: string
+}
 
 export type User = {
   id: string
@@ -17,10 +24,7 @@ export type User = {
   lastLogin?: string | null
   createdAt?: string
   updatedAt?: string
-  organization?: {
-    id: string
-    name: string
-  } | null
+  organization?: OrganizationSummary | null
 }
 
 export type CreateUserInput = {
@@ -41,19 +45,42 @@ export type UpdateUserInput = {
   active?: boolean
 }
 
-async function parseError(response: Response): Promise<string> {
-  try {
-    const data = await response.json()
+async function parseResponse<T>(response: Response): Promise<T> {
+  const text = await response.text()
 
-    if (data?.error) {
-      return data.error
+  let data: unknown = null
+
+  if (text) {
+    try {
+      data = JSON.parse(text)
+    } catch {
+      data = text
     }
-  } catch {
-    // Ignore invalid JSON
   }
 
-  return `Error HTTP ${response.status}`
+  if (!response.ok) {
+    if (
+      typeof data === 'object' &&
+      data !== null &&
+      'error' in data &&
+      typeof data.error === 'string'
+    ) {
+      throw new Error(data.error)
+    }
+
+    throw new Error(
+      typeof data === 'string'
+        ? data
+        : `Request failed with status ${response.status}`,
+    )
+  }
+
+  return data as T
 }
+
+// ============================================================
+// GET /users
+// ============================================================
 
 export async function getUsers(
   organizationId?: string,
@@ -64,14 +91,22 @@ export async function getUsers(
 
   const response = await apiFetch(`/users${query}`)
 
-  if (!response.ok) {
-    throw new Error(await parseError(response))
-  }
-
-  const data = await response.json()
-
-  return Array.isArray(data) ? data : []
+  return parseResponse<User[]>(response)
 }
+
+// ============================================================
+// GET /users/:id
+// ============================================================
+
+export async function getUser(id: string): Promise<User> {
+  const response = await apiFetch(`/users/${id}`)
+
+  return parseResponse<User>(response)
+}
+
+// ============================================================
+// POST /users
+// ============================================================
 
 export async function createUser(
   data: CreateUserInput,
@@ -81,12 +116,12 @@ export async function createUser(
     body: JSON.stringify(data),
   })
 
-  if (!response.ok) {
-    throw new Error(await parseError(response))
-  }
-
-  return response.json()
+  return parseResponse<User>(response)
 }
+
+// ============================================================
+// PATCH /users/:id
+// ============================================================
 
 export async function updateUser(
   id: string,
@@ -97,12 +132,13 @@ export async function updateUser(
     body: JSON.stringify(data),
   })
 
-  if (!response.ok) {
-    throw new Error(await parseError(response))
-  }
-
-  return response.json()
+  return parseResponse<User>(response)
 }
+
+// ============================================================
+// DELETE /users/:id
+// Soft delete = desactivar usuario
+// ============================================================
 
 export async function deactivateUser(
   id: string,
@@ -111,9 +147,5 @@ export async function deactivateUser(
     method: 'DELETE',
   })
 
-  if (!response.ok) {
-    throw new Error(await parseError(response))
-  }
-
-  return response.json()
+  return parseResponse<User>(response)
 }
