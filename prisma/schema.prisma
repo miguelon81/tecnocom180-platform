@@ -266,6 +266,8 @@ model DeviceModel {
 
   type DeviceType
 
+  codePrefix String?
+
   createdAt DateTime @default(now())
 
   devices Device[]
@@ -279,6 +281,8 @@ model DeviceModel {
 
 model Device {
   id String @id @default(uuid())
+
+  deviceCode String? @unique
 
   siteId String
 

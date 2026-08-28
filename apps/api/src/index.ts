@@ -1,4 +1,5 @@
 import { app } from "./app";
+import "./services/mqtt";
 
 const PORT = 3000;
 
