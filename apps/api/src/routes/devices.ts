@@ -1,4 +1,4 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import {
   authenticateToken,
@@ -37,6 +37,37 @@ function getDeviceId(req: AuthenticatedRequest) {
   return Array.isArray(req.params.id)
     ? req.params.id[0]
     : req.params.id;
+}
+
+async function generateDeviceCode() {
+  const prefix = "TC180-";
+
+  const lastDevice = await prisma.device.findFirst({
+    where: {
+      deviceCode: {
+        startsWith: prefix,
+      },
+    },
+    orderBy: {
+      deviceCode: "desc",
+    },
+    select: {
+      deviceCode: true,
+    },
+  });
+
+  let nextNumber = 1;
+
+  if (lastDevice?.deviceCode) {
+    const numericPart = lastDevice.deviceCode.replace(prefix, "");
+    const parsedNumber = Number(numericPart);
+
+    if (Number.isInteger(parsedNumber) && parsedNumber > 0) {
+      nextNumber = parsedNumber + 1;
+    }
+  }
+
+  return `${prefix}${String(nextNumber).padStart(6, "0")}`;
 }
 
 // GET /devices
@@ -237,6 +268,161 @@ devicesRouter.get(
   },
 );
 
+// GET /devices/:id/telemetry
+devicesRouter.get(
+  "/:id/telemetry",
+  authenticateToken,
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "RECEPTION",
+    "TECHNICIAN",
+  ),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const deviceId = getDeviceId(req);
+
+      const device = await prisma.device.findUnique({
+        where: {
+          id: deviceId,
+        },
+        select: {
+          id: true,
+          deviceCode: true,
+          site: {
+            select: {
+              organizationId: true,
+            },
+          },
+        },
+      });
+
+      if (!device) {
+        return res.status(404).json({
+          error: "Device not found",
+        });
+      }
+
+      if (
+        !canAccessOrganization(
+          req,
+          device.site.organizationId,
+        )
+      ) {
+        return res.status(403).json({
+          error: "Access denied for this organization",
+        });
+      }
+
+      const telemetry =
+        await prisma.deviceTelemetry.findMany({
+          where: {
+            deviceId,
+          },
+          orderBy: {
+            createdAt: "desc",
+          },
+          take: 100,
+        });
+
+      return res.json({
+        deviceId: device.id,
+        deviceCode: device.deviceCode,
+        telemetry,
+      });
+    } catch (error) {
+      console.error(
+        "Error fetching device telemetry:",
+        error,
+      );
+
+      return res.status(500).json({
+        error: "Failed to fetch device telemetry",
+      });
+    }
+  },
+);
+
+// GET /devices/:id/telemetry/latest
+devicesRouter.get(
+  "/:id/telemetry/latest",
+  authenticateToken,
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "RECEPTION",
+    "TECHNICIAN",
+  ),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const deviceId = getDeviceId(req);
+
+      const device = await prisma.device.findUnique({
+        where: {
+          id: deviceId,
+        },
+        select: {
+          id: true,
+          deviceCode: true,
+          site: {
+            select: {
+              organizationId: true,
+            },
+          },
+        },
+      });
+
+      if (!device) {
+        return res.status(404).json({
+          error: "Device not found",
+        });
+      }
+
+      if (
+        !canAccessOrganization(
+          req,
+          device.site.organizationId,
+        )
+      ) {
+        return res.status(403).json({
+          error: "Access denied for this organization",
+        });
+      }
+
+      const telemetry =
+        await prisma.deviceTelemetry.findFirst({
+          where: {
+            deviceId,
+          },
+          orderBy: {
+            createdAt: "desc",
+          },
+        });
+
+      if (!telemetry) {
+        return res.status(404).json({
+          error: "No telemetry found for this device",
+        });
+      }
+
+      return res.json({
+        deviceId: device.id,
+        deviceCode: device.deviceCode,
+        telemetry,
+      });
+    } catch (error) {
+      console.error(
+        "Error fetching latest device telemetry:",
+        error,
+      );
+
+      return res.status(500).json({
+        error: "Failed to fetch latest device telemetry",
+      });
+    }
+  },
+);
+
 // POST /devices
 devicesRouter.post(
   "/",
@@ -340,11 +526,14 @@ devicesRouter.post(
         }
       }
 
+      const deviceCode = await generateDeviceCode();
+
       const device = await prisma.device.create({
         data: {
-          siteId,
-          areaId: areaId ?? null,
-          modelId,
+        deviceCode,
+        siteId,
+        areaId: areaId ?? null,
+        modelId,
           hostname,
           serial,
           ip,

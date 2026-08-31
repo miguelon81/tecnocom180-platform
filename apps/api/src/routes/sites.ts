@@ -23,11 +23,20 @@ function canAccessOrganization(
   return req.user.organizationId === organizationId;
 }
 
+
 const siteInclude = {
   organization: true,
   areas: true,
   rooms: true,
-  devices: true,
+  devices: {
+    include: {
+      model: {
+        include: {
+          brand: true,
+        },
+      },
+    },
+  },
 };
 
 // GET /sites

@@ -316,6 +316,8 @@ model Device {
 
   tickets Ticket[]
 
+  telemetry DeviceTelemetry[]
+
   @@index([siteId])
   @@index([modelId])
 }
@@ -463,4 +465,33 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   @@index([organizationId])
+}
+
+// =====================
+// DEVICE TELEMETRY
+// =====================
+
+model DeviceTelemetry {
+  id String @id @default(uuid())
+
+  deviceId String
+
+  device Device @relation(fields: [deviceId], references: [id])
+
+  nivel Float?
+
+  bateria Float?
+
+  senal Float?
+
+  recarga Float?
+
+  consumo Float?
+
+  relay1 Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([deviceId])
+  @@index([createdAt])
 }

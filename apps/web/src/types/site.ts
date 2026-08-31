@@ -32,6 +32,7 @@ export interface Room {
 
 export interface Device {
   id: string
+  deviceCode: string | null
   siteId: string
   areaId: string | null
   modelId: string | null
@@ -42,6 +43,15 @@ export interface Device {
   firmware: string | null
   online: boolean
   installedAt: string | null
+  model: {
+    id: string
+    name: string
+    type: string
+    brand: {
+      id: string
+      name: string
+    } | null
+  } | null
 }
 
 export interface Site {

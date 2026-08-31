@@ -1,4 +1,6 @@
 import mqtt from "mqtt";
+import { processLevelAlert } from "./levelAlerts";
+import { prisma } from "../lib/prisma";
 
 const brokerUrl = process.env.MQTT_BROKER_URL;
 const username = process.env.MQTT_USERNAME;
@@ -50,13 +52,84 @@ mqttClient.on("connect", () => {
 
 mqttClient.on("message", (topic, message) => {
   console.log("MQTT mensaje recibido");
-
   console.log("Topic:", topic);
 
-  console.log(
-    "Payload:",
-    message.toString()
-  );
+  const payload = message.toString();
+
+  console.log("Payload:", payload);
+
+  try {
+    const telemetry = JSON.parse(payload);
+
+    const deviceKey = topic.split("/")[0];
+
+    void (async () => {
+      const device = await prisma.device.findUnique({
+        where: {
+          deviceCode: deviceKey,
+        },
+      });
+
+      if (!device) {
+        console.error(
+          `Dispositivo no encontrado: ${deviceKey}`
+        );
+        return;
+      }
+
+      await prisma.device.update({
+        where: {
+          id: device.id,
+        },
+        data: {
+          online: true,
+        },
+      });
+
+      await prisma.deviceTelemetry.create({
+        data: {
+          deviceId: device.id,
+          nivel: Number.isFinite(Number(telemetry.nivel))
+            ? Number(telemetry.nivel)
+            : null,
+          bateria: Number.isFinite(Number(telemetry.bateria))
+            ? Number(telemetry.bateria)
+            : null,
+          senal: Number.isFinite(Number(telemetry.senal))
+            ? Number(telemetry.senal)
+            : null,
+          recarga: Number.isFinite(Number(telemetry.recarga))
+            ? Number(telemetry.recarga)
+            : null,
+          consumo: Number.isFinite(Number(telemetry.consumo))
+            ? Number(telemetry.consumo)
+            : null,
+          relay1: Number.isFinite(Number(telemetry.relay1))
+            ? Number(telemetry.relay1)
+            : null,
+        },
+      });
+
+      console.log(
+        `Telemetría guardada: ${deviceKey}`
+      );
+
+      void processLevelAlert(
+        deviceKey,
+        telemetry,
+      );
+    })().catch((error) => {
+      console.error(
+        "Error guardando telemetría MQTT:",
+        error
+      );
+    });
+  } catch (error) {
+    console.error(
+      "Error procesando payload MQTT:",
+      error,
+    );
+  }
 });
 
 mqttClient.on("reconnect", () => {

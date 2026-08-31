@@ -1,4 +1,5 @@
-﻿import { useEffect, useState } from 'react'
+﻿
+import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 
 import { apiFetch } from '../api/client'
@@ -7,12 +8,22 @@ import { getAreas } from '../api/areas'
 import { getBrands } from '../api/brands'
 import { getModels } from '../api/models'
 
+import {
+  getLatestTelemetry,
+  getTelemetry,
+} from '../api/telemetry'
+
+import type {
+  DeviceTelemetry,
+} from '../api/telemetry'
+
 import type { Site, Area } from '../types/site'
 import type { Brand } from '../api/brands'
 import type { DeviceModel } from '../api/models'
 
 type Device = {
   id: string
+  deviceCode?: string | null
   siteId: string
   areaId?: string | null
   modelId: string
@@ -67,6 +78,27 @@ const emptyForm: DeviceForm = {
   online: false,
 }
 
+function formatTelemetryDate(value: string) {
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+
+  return date.toLocaleString('es-MX')
+}
+
+function formatNumber(
+  value: number | null,
+  suffix = '',
+) {
+  if (value === null || value === undefined) {
+    return '—'
+  }
+
+  return `${value}${suffix}`
+}
+
 function DevicesPage() {
   const [devices, setDevices] = useState<Device[]>([])
   const [sites, setSites] = useState<Site[]>([])
@@ -77,6 +109,21 @@ function DevicesPage() {
   const [selectedSiteId, setSelectedSiteId] = useState('')
   const [selectedAreaId, setSelectedAreaId] = useState('')
 
+  const [selectedTelemetryDeviceId, setSelectedTelemetryDeviceId] =
+    useState<string | null>(null)
+
+  const [selectedTelemetry, setSelectedTelemetry] =
+    useState<DeviceTelemetry | null>(null)
+
+  const [telemetryHistory, setTelemetryHistory] =
+    useState<DeviceTelemetry[]>([])
+
+  const [telemetryLoading, setTelemetryLoading] =
+    useState(false)
+
+  const [telemetryError, setTelemetryError] =
+    useState<string | null>(null)
+
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
@@ -84,9 +131,11 @@ function DevicesPage() {
   const [formError, setFormError] = useState<string | null>(null)
 
   const [showForm, setShowForm] = useState(false)
-  const [editingDevice, setEditingDevice] = useState<Device | null>(null)
+  const [editingDevice, setEditingDevice] =
+    useState<Device | null>(null)
 
-  const [form, setForm] = useState<DeviceForm>(emptyForm)
+  const [form, setForm] =
+    useState<DeviceForm>(emptyForm)
 
   async function loadDevices() {
     try {
@@ -107,15 +156,23 @@ function DevicesPage() {
         ? `?${query.toString()}`
         : ''
 
-      const response = await apiFetch(`/devices${suffix}`)
+      const response = await apiFetch(
+        `/devices${suffix}`,
+      )
 
       if (!response.ok) {
-        throw new Error('No se pudieron cargar los dispositivos')
+        throw new Error(
+          'No se pudieron cargar los dispositivos',
+        )
       }
 
       const data = await response.json()
 
-      setDevices(Array.isArray(data) ? data : [])
+      setDevices(
+        Array.isArray(data)
+          ? data
+          : [],
+      )
     } catch (err) {
       console.error(err)
 
@@ -149,11 +206,17 @@ function DevicesPage() {
       setModels(modelData)
 
       if (siteData.length > 0) {
-        const firstSiteId = siteData[0].id
+        const firstSiteId =
+          siteData[0].id
 
-        setSelectedSiteId(firstSiteId)
+        setSelectedSiteId(
+          firstSiteId,
+        )
 
-        const areaData = await getAreas(firstSiteId)
+        const areaData =
+          await getAreas(
+            firstSiteId,
+          )
 
         setAreas(areaData)
       } else {
@@ -185,17 +248,25 @@ function DevicesPage() {
 
     async function loadSiteAreas() {
       try {
-        const data = await getAreas(selectedSiteId)
+        const data =
+          await getAreas(
+            selectedSiteId,
+          )
 
         setAreas(data)
 
-        setSelectedAreaId((current) =>
-          data.some((area) => area.id === current)
-            ? current
-            : '',
+        setSelectedAreaId(
+          (current) =>
+            data.some(
+              (area) =>
+                area.id === current,
+            )
+              ? current
+              : '',
         )
       } catch (err) {
         console.error(err)
+
         setAreas([])
         setSelectedAreaId('')
       }
@@ -210,7 +281,109 @@ function DevicesPage() {
     }
 
     loadDevices()
-  }, [selectedSiteId, selectedAreaId])
+  }, [
+    selectedSiteId,
+    selectedAreaId,
+  ])
+
+  async function refreshTelemetry(
+    deviceId: string,
+  ) {
+    try {
+      const [
+        latest,
+        history,
+      ] = await Promise.all([
+        getLatestTelemetry(deviceId),
+        getTelemetry(deviceId),
+      ])
+
+      setSelectedTelemetry(
+        latest.telemetry ?? null,
+      )
+
+      setTelemetryHistory(
+        Array.isArray(history.telemetry)
+          ? history.telemetry
+          : [],
+      )
+
+      setTelemetryError(null)
+    } catch (err) {
+      console.error(
+        'Error actualizando telemetría:',
+        err,
+      )
+
+      setTelemetryError(
+        err instanceof Error
+          ? err.message
+          : 'No se pudo actualizar la telemetría',
+      )
+    }
+  }
+
+  async function loadLatestTelemetry(
+    deviceId: string,
+  ) {
+    try {
+      setTelemetryLoading(true)
+      setTelemetryError(null)
+      setSelectedTelemetryDeviceId(
+        deviceId,
+      )
+
+      await refreshTelemetry(
+        deviceId,
+      )
+    } catch (err) {
+      console.error(err)
+
+      setSelectedTelemetry(null)
+      setTelemetryHistory([])
+
+      setTelemetryError(
+        err instanceof Error
+          ? err.message
+          : 'No se pudo consultar la telemetría',
+      )
+    } finally {
+      setTelemetryLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!selectedTelemetryDeviceId) {
+      return
+    }
+
+    const interval =
+      window.setInterval(() => {
+        refreshTelemetry(
+          selectedTelemetryDeviceId,
+        )
+      }, 10000)
+
+    return () => {
+      window.clearInterval(
+        interval,
+      )
+    }
+  }, [
+    selectedTelemetryDeviceId,
+  ])
+
+  function closeTelemetry() {
+    setSelectedTelemetryDeviceId(
+      null,
+    )
+
+    setSelectedTelemetry(null)
+
+    setTelemetryHistory([])
+
+    setTelemetryError(null)
+  }
 
   function handleFormChange(
     field: keyof DeviceForm,
@@ -235,22 +408,32 @@ function DevicesPage() {
     setShowForm(true)
   }
 
-  function openEditForm(device: Device) {
-    const brandId = device.model?.brand?.id ?? ''
+  function openEditForm(
+    device: Device,
+  ) {
+    const brandId =
+      device.model?.brand?.id ?? ''
 
     setEditingDevice(device)
 
     setForm({
       siteId: device.siteId,
-      areaId: device.areaId ?? '',
+      areaId:
+        device.areaId ?? '',
       brandId,
       modelId: device.modelId,
-      hostname: device.hostname ?? '',
-      serial: device.serial ?? '',
-      ip: device.ip ?? '',
-      mac: device.mac ?? '',
-      firmware: device.firmware ?? '',
-      online: device.online,
+      hostname:
+        device.hostname ?? '',
+      serial:
+        device.serial ?? '',
+      ip:
+        device.ip ?? '',
+      mac:
+        device.mac ?? '',
+      firmware:
+        device.firmware ?? '',
+      online:
+        device.online,
     })
 
     setFormError(null)
@@ -274,12 +457,16 @@ function DevicesPage() {
     event.preventDefault()
 
     if (!form.siteId) {
-      setFormError('El sitio es obligatorio')
+      setFormError(
+        'El sitio es obligatorio',
+      )
       return
     }
 
     if (!form.modelId) {
-      setFormError('El modelo es obligatorio')
+      setFormError(
+        'El modelo es obligatorio',
+      )
       return
     }
 
@@ -289,62 +476,97 @@ function DevicesPage() {
 
       const body = {
         siteId: form.siteId,
-        areaId: form.areaId || null,
+        areaId:
+          form.areaId || null,
         modelId: form.modelId,
-        hostname: form.hostname.trim() || null,
-        serial: form.serial.trim() || null,
-        ip: form.ip.trim() || null,
-        mac: form.mac.trim() || null,
-        firmware: form.firmware.trim() || null,
+        hostname:
+          form.hostname.trim() ||
+          null,
+        serial:
+          form.serial.trim() ||
+          null,
+        ip:
+          form.ip.trim() ||
+          null,
+        mac:
+          form.mac.trim() ||
+          null,
+        firmware:
+          form.firmware.trim() ||
+          null,
         online: form.online,
       }
 
       if (editingDevice) {
-        const response = await apiFetch(
-          `/devices/${editingDevice.id}`,
-          {
-            method: 'PATCH',
-            body: JSON.stringify(body),
-          },
-        )
+        const response =
+          await apiFetch(
+            `/devices/${editingDevice.id}`,
+            {
+              method: 'PATCH',
+              body: JSON.stringify(
+                body,
+              ),
+            },
+          )
 
         if (!response.ok) {
-          const data = await response.json().catch(() => null)
+          const data =
+            await response
+              .json()
+              .catch(() => null)
 
           throw new Error(
-            data?.error ?? 'No se pudo actualizar el dispositivo',
+            data?.error ??
+              'No se pudo actualizar el dispositivo',
           )
         }
 
-        const updatedDevice = await response.json()
+        const updatedDevice =
+          await response.json()
 
-        setDevices((current) =>
-          current.map((device) =>
-            device.id === updatedDevice.id
-              ? updatedDevice
-              : device,
-          ),
+        setDevices(
+          (current) =>
+            current.map(
+              (device) =>
+                device.id ===
+                updatedDevice.id
+                  ? updatedDevice
+                  : device,
+            ),
         )
       } else {
-        const response = await apiFetch('/devices', {
-          method: 'POST',
-          body: JSON.stringify(body),
-        })
+        const response =
+          await apiFetch(
+            '/devices',
+            {
+              method: 'POST',
+              body: JSON.stringify(
+                body,
+              ),
+            },
+          )
 
         if (!response.ok) {
-          const data = await response.json().catch(() => null)
+          const data =
+            await response
+              .json()
+              .catch(() => null)
 
           throw new Error(
-            data?.error ?? 'No se pudo crear el dispositivo',
+            data?.error ??
+              'No se pudo crear el dispositivo',
           )
         }
 
-        const createdDevice = await response.json()
+        const createdDevice =
+          await response.json()
 
-        setDevices((current) => [
-          createdDevice,
-          ...current,
-        ])
+        setDevices(
+          (current) => [
+            createdDevice,
+            ...current,
+          ],
+        )
       }
 
       closeForm()
@@ -361,15 +583,19 @@ function DevicesPage() {
     }
   }
 
-  async function handleDelete(device: Device) {
+  async function handleDelete(
+    device: Device,
+  ) {
     const name =
       device.hostname ??
+      device.deviceCode ??
       device.serial ??
       device.id
 
-    const confirmed = window.confirm(
-      `¿Seguro que deseas eliminar el dispositivo "${name}"?`,
-    )
+    const confirmed =
+      window.confirm(
+        `¿Seguro que deseas eliminar el dispositivo "${name}"?`,
+      )
 
     if (!confirmed) {
       return
@@ -378,15 +604,19 @@ function DevicesPage() {
     try {
       setError(null)
 
-      const response = await apiFetch(
-        `/devices/${device.id}`,
-        {
-          method: 'DELETE',
-        },
-      )
+      const response =
+        await apiFetch(
+          `/devices/${device.id}`,
+          {
+            method: 'DELETE',
+          },
+        )
 
       if (!response.ok) {
-        const data = await response.json().catch(() => null)
+        const data =
+          await response
+            .json()
+            .catch(() => null)
 
         throw new Error(
           data?.error ??
@@ -394,10 +624,19 @@ function DevicesPage() {
         )
       }
 
-      setDevices((current) =>
-        current.filter(
-          (item) => item.id !== device.id,
-        ),
+      if (
+        selectedTelemetryDeviceId ===
+        device.id
+      ) {
+        closeTelemetry()
+      }
+
+      setDevices(
+        (current) =>
+          current.filter(
+            (item) =>
+              item.id !== device.id,
+          ),
       )
     } catch (err) {
       console.error(err)
@@ -410,12 +649,74 @@ function DevicesPage() {
     }
   }
 
-  const availableModels = form.brandId
-    ? models.filter(
-        (model) =>
-          model.brandId === form.brandId,
+  const availableModels =
+    form.brandId
+      ? models.filter(
+          (model) =>
+            model.brandId ===
+            form.brandId,
+        )
+      : []
+
+  const telemetryPoints =
+    [...telemetryHistory]
+      .filter(
+        (item) =>
+          item.nivel !== null,
       )
-    : []
+      .reverse()
+
+  const chartWidth = 700
+  const chartHeight = 280
+  const chartPadding = 40
+
+  const chartMax = 100
+  const chartMin = 0
+
+  const chartXStep =
+    telemetryPoints.length > 1
+      ? (chartWidth -
+          chartPadding * 2) /
+        (telemetryPoints.length - 1)
+      : 0
+
+  const chartYRange =
+    chartMax - chartMin
+
+  const chartCoordinates =
+    telemetryPoints.map(
+      (item, index) => {
+        const value =
+          item.nivel ?? 0
+
+        const x =
+          chartPadding +
+          index * chartXStep
+
+        const y =
+          chartHeight -
+          chartPadding -
+          ((value - chartMin) /
+            chartYRange) *
+            (chartHeight -
+              chartPadding * 2)
+
+        return {
+          x,
+          y,
+          value,
+          item,
+        }
+      },
+    )
+
+  const chartPolyline =
+    chartCoordinates
+      .map(
+        (point) =>
+          `${point.x},${point.y}`,
+      )
+      .join(' ')
 
   return (
     <div className="page">
@@ -425,11 +726,13 @@ function DevicesPage() {
             TECNOCOM180 PLATFORM
           </p>
 
-          <h1>Dispositivos</h1>
+          <h1>
+            Dispositivos
+          </h1>
 
           <p>
-            Inventario de infraestructura tecnológica
-            de los sitios.
+            Inventario de infraestructura
+            tecnológica de los sitios.
           </p>
         </div>
 
@@ -464,29 +767,37 @@ function DevicesPage() {
           >
             <label>
               Sitio
+
               <select
-                value={selectedSiteId}
+                value={
+                  selectedSiteId
+                }
                 onChange={(event) =>
                   setSelectedSiteId(
                     event.target.value,
                   )
                 }
               >
-                {sites.map((site) => (
-                  <option
-                    key={site.id}
-                    value={site.id}
-                  >
-                    {site.name}
-                  </option>
-                ))}
+                {sites.map(
+                  (site) => (
+                    <option
+                      key={site.id}
+                      value={site.id}
+                    >
+                      {site.name}
+                    </option>
+                  ),
+                )}
               </select>
             </label>
 
             <label>
               Área
+
               <select
-                value={selectedAreaId}
+                value={
+                  selectedAreaId
+                }
                 onChange={(event) =>
                   setSelectedAreaId(
                     event.target.value,
@@ -497,20 +808,24 @@ function DevicesPage() {
                   Todas las áreas
                 </option>
 
-                {areas.map((area) => (
-                  <option
-                    key={area.id}
-                    value={area.id}
-                  >
-                    {area.name}
-                  </option>
-                ))}
+                {areas.map(
+                  (area) => (
+                    <option
+                      key={area.id}
+                      value={area.id}
+                    >
+                      {area.name}
+                    </option>
+                  ),
+                )}
               </select>
             </label>
 
             <button
               type="button"
-              onClick={openCreateForm}
+              onClick={
+                openCreateForm
+              }
             >
               + Nuevo dispositivo
             </button>
@@ -534,6 +849,7 @@ function DevicesPage() {
           <h2>
             {editingDevice
               ? editingDevice.hostname ??
+                editingDevice.deviceCode ??
                 editingDevice.serial ??
                 'Dispositivo'
               : 'Registrar dispositivo'}
@@ -545,7 +861,11 @@ function DevicesPage() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit}>
+          <form
+            onSubmit={
+              handleSubmit
+            }
+          >
             <div
               style={{
                 display: 'grid',
@@ -556,8 +876,11 @@ function DevicesPage() {
             >
               <label>
                 Sitio
+
                 <select
-                  value={form.siteId}
+                  value={
+                    form.siteId
+                  }
                   onChange={(event) => {
                     handleFormChange(
                       'siteId',
@@ -569,27 +892,34 @@ function DevicesPage() {
                       '',
                     )
                   }}
-                  disabled={!!editingDevice}
+                  disabled={
+                    !!editingDevice
+                  }
                 >
                   <option value="">
                     Selecciona un sitio
                   </option>
 
-                  {sites.map((site) => (
-                    <option
-                      key={site.id}
-                      value={site.id}
-                    >
-                      {site.name}
-                    </option>
-                  ))}
+                  {sites.map(
+                    (site) => (
+                      <option
+                        key={site.id}
+                        value={site.id}
+                      >
+                        {site.name}
+                      </option>
+                    ),
+                  )}
                 </select>
               </label>
 
               <label>
                 Área
+
                 <select
-                  value={form.areaId}
+                  value={
+                    form.areaId
+                  }
                   onChange={(event) =>
                     handleFormChange(
                       'areaId',
@@ -607,21 +937,26 @@ function DevicesPage() {
                         area.siteId ===
                         form.siteId,
                     )
-                    .map((area) => (
-                      <option
-                        key={area.id}
-                        value={area.id}
-                      >
-                        {area.name}
-                      </option>
-                    ))}
+                    .map(
+                      (area) => (
+                        <option
+                          key={area.id}
+                          value={area.id}
+                        >
+                          {area.name}
+                        </option>
+                      ),
+                    )}
                 </select>
               </label>
 
               <label>
                 Marca
+
                 <select
-                  value={form.brandId}
+                  value={
+                    form.brandId
+                  }
                   onChange={(event) => {
                     handleFormChange(
                       'brandId',
@@ -638,22 +973,29 @@ function DevicesPage() {
                     Selecciona una marca
                   </option>
 
-                  {brands.map((brand) => (
-                    <option
-                      key={brand.id}
-                      value={brand.id}
-                    >
-                      {brand.name}
-                    </option>
-                  ))}
+                  {brands.map(
+                    (brand) => (
+                      <option
+                        key={brand.id}
+                        value={brand.id}
+                      >
+                        {brand.name}
+                      </option>
+                    ),
+                  )}
                 </select>
               </label>
 
               <label>
                 Modelo
+
                 <select
-                  value={form.modelId}
-                  disabled={!form.brandId}
+                  value={
+                    form.modelId
+                  }
+                  disabled={
+                    !form.brandId
+                  }
                   onChange={(event) =>
                     handleFormChange(
                       'modelId',
@@ -680,9 +1022,12 @@ function DevicesPage() {
 
               <label>
                 Hostname
+
                 <input
                   type="text"
-                  value={form.hostname}
+                  value={
+                    form.hostname
+                  }
                   onChange={(event) =>
                     handleFormChange(
                       'hostname',
@@ -695,6 +1040,7 @@ function DevicesPage() {
 
               <label>
                 IP
+
                 <input
                   type="text"
                   value={form.ip}
@@ -710,6 +1056,7 @@ function DevicesPage() {
 
               <label>
                 MAC
+
                 <input
                   type="text"
                   value={form.mac}
@@ -725,9 +1072,12 @@ function DevicesPage() {
 
               <label>
                 Serial
+
                 <input
                   type="text"
-                  value={form.serial}
+                  value={
+                    form.serial
+                  }
                   onChange={(event) =>
                     handleFormChange(
                       'serial',
@@ -739,9 +1089,12 @@ function DevicesPage() {
 
               <label>
                 Firmware
+
                 <input
                   type="text"
-                  value={form.firmware}
+                  value={
+                    form.firmware
+                  }
                   onChange={(event) =>
                     handleFormChange(
                       'firmware',
@@ -760,7 +1113,9 @@ function DevicesPage() {
               >
                 <input
                   type="checkbox"
-                  checked={form.online}
+                  checked={
+                    form.online
+                  }
                   onChange={(event) =>
                     handleFormChange(
                       'online',
@@ -768,6 +1123,7 @@ function DevicesPage() {
                     )
                   }
                 />
+
                 Online
               </label>
             </div>
@@ -793,7 +1149,9 @@ function DevicesPage() {
               <button
                 type="button"
                 disabled={saving}
-                onClick={closeForm}
+                onClick={
+                  closeForm
+                }
               >
                 Cancelar
               </button>
@@ -802,22 +1160,408 @@ function DevicesPage() {
         </section>
       )}
 
+      {selectedTelemetryDeviceId && (
+        <section
+          className="card"
+          style={{
+            marginBottom: '24px',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              justifyContent:
+                'space-between',
+              alignItems: 'center',
+              gap: '16px',
+              flexWrap: 'wrap',
+            }}
+          >
+            <div>
+              <p className="eyebrow">
+                TELEMETRÍA
+              </p>
+
+              <h2>
+                {devices.find(
+                  (device) =>
+                    device.id ===
+                    selectedTelemetryDeviceId,
+                )?.deviceCode ??
+                  'Dispositivo'}
+              </h2>
+            </div>
+
+            <button
+              type="button"
+              onClick={
+                closeTelemetry
+              }
+            >
+              Cerrar
+            </button>
+          </div>
+
+          {telemetryLoading && (
+            <p>
+              Consultando última
+              telemetría...
+            </p>
+          )}
+
+          {telemetryError && (
+            <div className="error-message">
+              {telemetryError}
+            </div>
+          )}
+
+          {selectedTelemetry &&
+            !telemetryLoading && (
+              <>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns:
+                      'repeat(auto-fit, minmax(150px, 1fr))',
+                    gap: '16px',
+                    marginTop: '20px',
+                  }}
+                >
+                  <div className="card">
+                    <p className="eyebrow">
+                      NIVEL
+                    </p>
+
+                    <h2>
+                      {formatNumber(
+                        selectedTelemetry.nivel,
+                        '%',
+                      )}
+                    </h2>
+                  </div>
+
+                  <div className="card">
+                    <p className="eyebrow">
+                      BATERÍA
+                    </p>
+
+                    <h2>
+                      {formatNumber(
+                        selectedTelemetry.bateria,
+                        '%',
+                      )}
+                    </h2>
+                  </div>
+
+                  <div className="card">
+                    <p className="eyebrow">
+                      SEÑAL
+                    </p>
+
+                    <h2>
+                      {formatNumber(
+                        selectedTelemetry.senal,
+                        ' dBm',
+                      )}
+                    </h2>
+                  </div>
+
+                  <div className="card">
+                    <p className="eyebrow">
+                      RECARGA
+                    </p>
+
+                    <h2>
+                      {formatNumber(
+                        selectedTelemetry.recarga,
+                      )}
+                    </h2>
+                  </div>
+
+                  <div className="card">
+                    <p className="eyebrow">
+                      CONSUMO
+                    </p>
+
+                    <h2>
+                      {formatNumber(
+                        selectedTelemetry.consumo,
+                      )}
+                    </h2>
+                  </div>
+
+                  <div className="card">
+                    <p className="eyebrow">
+                      RELAY 1
+                    </p>
+
+                    <h2>
+                      {selectedTelemetry.relay1 ===
+                      1
+                        ? 'ON'
+                        : selectedTelemetry.relay1 ===
+                            0
+                          ? 'OFF'
+                          : '—'}
+                    </h2>
+                  </div>
+                </div>
+
+                {telemetryPoints.length > 0 && (
+                  <div
+                    className="card"
+                    style={{
+                      marginTop: '24px',
+                    }}
+                  >
+                    <p className="eyebrow">
+                      HISTORIAL
+                    </p>
+
+                    <h3>
+                      Nivel de cisterna
+                    </h3>
+
+                    <div
+                      style={{
+                        width: '100%',
+                        overflowX:
+                          'auto',
+                        marginTop:
+                          '16px',
+                      }}
+                    >
+                      <svg
+                        viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+                        width="100%"
+                        height="280"
+                        role="img"
+                        aria-label="Historial del nivel de la cisterna"
+                      >
+                        <line
+                          x1={
+                            chartPadding
+                          }
+                          y1={
+                            chartHeight -
+                            chartPadding
+                          }
+                          x2={
+                            chartWidth -
+                            chartPadding
+                          }
+                          y2={
+                            chartHeight -
+                            chartPadding
+                          }
+                          stroke="currentColor"
+                          opacity="0.25"
+                        />
+
+                        <line
+                          x1={
+                            chartPadding
+                          }
+                          y1={
+                            chartPadding
+                          }
+                          x2={
+                            chartPadding
+                          }
+                          y2={
+                            chartHeight -
+                            chartPadding
+                          }
+                          stroke="currentColor"
+                          opacity="0.25"
+                        />
+
+                        <text
+                          x="8"
+                          y={
+                            chartPadding +
+                            5
+                          }
+                          fontSize="12"
+                          opacity="0.7"
+                        >
+                          100%
+                        </text>
+
+                        <text
+                          x="8"
+                          y={
+                            chartHeight -
+                            chartPadding +
+                            5
+                          }
+                          fontSize="12"
+                          opacity="0.7"
+                        >
+                          0%
+                        </text>
+
+                        {chartCoordinates.length >
+                          1 && (
+                          <polyline
+                            points={
+                              chartPolyline
+                            }
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="3"
+                          />
+                        )}
+
+                        {chartCoordinates.map(
+                          (point) => (
+                            <circle
+                              key={
+                                point.item.id
+                              }
+                              cx={
+                                point.x
+                              }
+                              cy={
+                                point.y
+                              }
+                              r="5"
+                              fill="currentColor"
+                            >
+                              <title>
+                                {point.value}
+                                % —{' '}
+                                {formatTelemetryDate(
+                                  point
+                                    .item
+                                    .createdAt,
+                                )}
+                              </title>
+                            </circle>
+                          ),
+                        )}
+
+                        {chartCoordinates.length >
+                          0 && (
+                          <>
+                            <text
+                              x={
+                                chartCoordinates[0]
+                                  .x
+                              }
+                              y={
+                                chartHeight -
+                                12
+                              }
+                              fontSize="11"
+                              textAnchor="middle"
+                              opacity="0.7"
+                            >
+                              {formatTelemetryDate(
+                                chartCoordinates[0]
+                                  .item
+                                  .createdAt,
+                              )}
+                            </text>
+
+                            <text
+                              x={
+                                chartCoordinates[
+                                  chartCoordinates.length -
+                                    1
+                                ].x
+                              }
+                              y={
+                                chartHeight -
+                                12
+                              }
+                              fontSize="11"
+                              textAnchor="middle"
+                              opacity="0.7"
+                            >
+                              {formatTelemetryDate(
+                                chartCoordinates[
+                                  chartCoordinates.length -
+                                    1
+                                ].item
+                                  .createdAt,
+                              )}
+                            </text>
+                          </>
+                        )}
+                      </svg>
+                    </div>
+
+                    <p
+                      style={{
+                        marginTop:
+                          '8px',
+                        opacity: 0.7,
+                      }}
+                    >
+                      {telemetryPoints.length}{' '}
+                      {telemetryPoints.length ===
+                      1
+                        ? 'lectura'
+                        : 'lecturas'}{' '}
+                      registradas
+                    </p>
+                  </div>
+                )}
+
+                <p
+                  style={{
+                    marginTop: '16px',
+                    opacity: 0.7,
+                  }}
+                >
+                  Última lectura:{' '}
+                  {formatTelemetryDate(
+                    selectedTelemetry.createdAt,
+                  )}
+                </p>
+
+                <p
+                  style={{
+                    marginTop: '4px',
+                    opacity: 0.6,
+                    fontSize: '0.9rem',
+                  }}
+                >
+                  Actualización automática
+                  cada 10 segundos.
+                </p>
+              </>
+            )}
+        </section>
+      )}
+
       {loading ? (
-        <p>Cargando dispositivos...</p>
+        <p>
+          Cargando dispositivos...
+        </p>
       ) : sites.length === 0 ? (
         <section className="card">
-          <h2>No hay sitios registrados</h2>
+          <h2>
+            No hay sitios registrados
+          </h2>
+
           <p>
-            Primero debes registrar un sitio para
-            poder crear dispositivos.
+            Primero debes registrar un
+            sitio para poder crear
+            dispositivos.
           </p>
         </section>
       ) : devices.length === 0 ? (
         <section className="card">
-          <h2>No hay dispositivos registrados</h2>
+          <h2>
+            No hay dispositivos registrados
+          </h2>
+
           <p>
-            No existen dispositivos para el sitio y
-            área seleccionados.
+            No existen dispositivos
+            para el sitio y área
+            seleccionados.
           </p>
         </section>
       ) : (
@@ -825,85 +1569,145 @@ function DevicesPage() {
           <table>
             <thead>
               <tr>
-                <th>Dispositivo</th>
-                <th>Modelo</th>
-                <th>Tipo</th>
-                <th>Sitio</th>
-                <th>Área</th>
-                <th>IP</th>
-                <th>Estado</th>
-                <th>Acciones</th>
+                <th>
+                  Dispositivo
+                </th>
+
+                <th>
+                  Código
+                </th>
+
+                <th>
+                  Modelo
+                </th>
+
+                <th>
+                  Tipo
+                </th>
+
+                <th>
+                  Sitio
+                </th>
+
+                <th>
+                  Área
+                </th>
+
+                <th>
+                  IP
+                </th>
+
+                <th>
+                  Estado
+                </th>
+
+                <th>
+                  Acciones
+                </th>
               </tr>
             </thead>
 
             <tbody>
-              {devices.map((device) => (
-                <tr key={device.id}>
-                  <td>
-                    <strong>
-                      {device.hostname ||
-                        device.serial ||
-                        device.id}
-                    </strong>
-                  </td>
+              {devices.map(
+                (device) => (
+                  <tr
+                    key={device.id}
+                  >
+                    <td>
+                      <strong>
+                        {device.hostname ||
+                          device.serial ||
+                          device.id}
+                      </strong>
+                    </td>
 
-                  <td>
-                    {device.model
-                      ? `${device.model.brand?.name ?? ''} ${device.model.name}`
-                      : '—'}
-                  </td>
+                    <td>
+                      {device.deviceCode ??
+                        '—'}
+                    </td>
 
-                  <td>
-                    {device.model?.type ?? '—'}
-                  </td>
+                    <td>
+                      {device.model
+                        ? `${device.model.brand?.name ?? ''} ${device.model.name}`
+                        : '—'}
+                    </td>
 
-                  <td>
-                    {device.site?.name ?? '—'}
-                  </td>
+                    <td>
+                      {device.model
+                        ?.type ??
+                        '—'}
+                    </td>
 
-                  <td>
-                    {device.area?.name ?? 'Sin área'}
-                  </td>
+                    <td>
+                      {device.site
+                        ?.name ??
+                        '—'}
+                    </td>
 
-                  <td>
-                    {device.ip ?? '—'}
-                  </td>
+                    <td>
+                      {device.area
+                        ?.name ??
+                        'Sin área'}
+                    </td>
 
-                  <td>
-                    {device.online
-                      ? 'Online'
-                      : 'Offline'}
-                  </td>
+                    <td>
+                      {device.ip ??
+                        '—'}
+                    </td>
 
-                  <td>
-                    <div
-                      style={{
-                        display: 'flex',
-                        gap: '8px',
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      <button
-                        type="button"
-                        onClick={() =>
-                          openEditForm(device)
-                        }
+                    <td>
+                      {device.online
+                        ? 'Online'
+                        : 'Offline'}
+                    </td>
+
+                    <td>
+                      <div
+                        style={{
+                          display:
+                            'flex',
+                          gap: '8px',
+                          flexWrap:
+                            'wrap',
+                        }}
                       >
-                        Editar
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            loadLatestTelemetry(
+                              device.id,
+                            )
+                          }
+                        >
+                          Telemetría
+                        </button>
 
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleDelete(device)
-                        }
-                      >
-                        Eliminar
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openEditForm(
+                              device,
+                            )
+                          }
+                        >
+                          Editar
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleDelete(
+                              device,
+                            )
+                          }
+                        >
+                          Eliminar
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ),
+              )}
             </tbody>
           </table>
         </div>
