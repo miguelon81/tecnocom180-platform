@@ -140,6 +140,27 @@ function AppLayout({ children }: AppLayoutProps) {
           >
             Habitaciones
           </NavLink>
+          {/* =====================================================
+              HUÉSPEDES
+              SUPER_ADMIN
+              ORG_ADMIN
+              OPERATIONS
+              RECEPTION
+          ===================================================== */}
+
+          {(isSuperAdmin ||
+            isOrgAdmin ||
+            isOperations ||
+            user?.role === 'RECEPTION') && (
+            <NavLink
+              to="/guests"
+              className={({ isActive }) =>
+                `nav-item ${isActive ? 'nav-item-active' : ''}`
+              }
+            >
+              Huéspedes
+            </NavLink>
+          )}
 
           {/* =====================================================
               DISPOSITIVOS

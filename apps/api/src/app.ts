@@ -12,6 +12,7 @@ import { roomsRouter } from "./routes/rooms";
 import { usersRouter } from "./routes/users";
 import { authRouter } from "./routes/auth";
 import { diagnosticsRouter } from "./routes/diagnostics";
+import { guestsRouter } from "./routes/guests";
 
 const app = express();
 
@@ -34,5 +35,6 @@ app.use("/tickets", ticketsRouter);
 app.use("/diagnostics", diagnosticsRouter);
 app.use("/rooms", roomsRouter);
 app.use("/users", usersRouter);
+app.use("/guests", guestsRouter);
 
 export { app };

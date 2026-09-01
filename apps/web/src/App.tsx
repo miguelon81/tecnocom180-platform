@@ -18,6 +18,7 @@ import DiagnosticsPage from './pages/DiagnosticsPage'
 import AreasPage from './pages/AreasPage'
 import OrganizationsPage from './pages/OrganizationsPage'
 import UsersPage from './pages/UsersPage'
+import GuestsPage from './pages/GuestsPage'
 
 
 import './App.css'
@@ -58,6 +59,21 @@ function App() {
           }
         />
 
+        {/* =====================================================
+            GUEST MANAGER
+        ===================================================== */}
+        <Route
+          path="/guests"
+          element={
+            isAuthenticated ? (
+              <AppLayout>
+                <GuestsPage />
+              </AppLayout>
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
 
         {/* =====================================================
             USERS
@@ -178,6 +194,22 @@ function App() {
             isAuthenticated ? (
               <AppLayout>
                 <DiagnosticsPage />
+              </AppLayout>
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+
+        {/* =====================================================
+            GUESTS
+        ===================================================== */}
+        <Route
+          path="/guests"
+          element={
+            isAuthenticated ? (
+              <AppLayout>
+                <GuestsPage />
               </AppLayout>
             ) : (
               <Navigate to="/login" replace />

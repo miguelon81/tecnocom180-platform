@@ -70,6 +70,20 @@ enum DiagnosticStatus {
   FAILED
 }
 
+enum GuestStayStatus {
+  RESERVED
+  CHECKED_IN
+  CHECKED_OUT
+  CANCELLED
+}
+
+enum GuestWifiStatus {
+  PENDING
+  ACTIVE
+  EXPIRED
+  DISABLED
+}
+
 // =====================
 // ORGANIZATION
 // =====================
@@ -174,6 +188,8 @@ model Site {
 
   tickets Ticket[]
 
+  guests Guest[]
+
   @@unique([organizationId, code])
   @@index([organizationId])
 }
@@ -233,8 +249,111 @@ model Room {
 
   tickets Ticket[]
 
+  guestStays GuestStay[]
+
   @@unique([siteId, number])
   @@index([siteId])
+}
+
+// =====================
+// GUESTS
+// =====================
+
+model Guest {
+  id String @id @default(uuid())
+
+  siteId String
+
+  site Site @relation(fields: [siteId], references: [id])
+
+  name String
+
+  email String?
+
+  phone String?
+
+  createdAt DateTime @default(now())
+
+  updatedAt DateTime @updatedAt
+
+  stays GuestStay[]
+
+  @@index([siteId])
+}
+
+// =====================
+// GUEST STAYS
+// =====================
+
+model GuestStay {
+  id String @id @default(uuid())
+
+  guestId String
+
+  guest Guest @relation(fields: [guestId], references: [id])
+
+  roomId String
+
+  room Room @relation(fields: [roomId], references: [id])
+
+  checkIn DateTime
+
+  checkOut DateTime
+
+  actualCheckIn DateTime?
+
+  actualCheckOut DateTime?
+
+  status GuestStayStatus @default(RESERVED)
+
+  notes String?
+
+  wifiAccess GuestWifiAccess?
+
+  createdAt DateTime @default(now())
+
+  updatedAt DateTime @updatedAt
+
+  @@index([guestId])
+  @@index([roomId])
+  @@index([checkIn])
+  @@index([checkOut])
+  @@index([status])
+}
+
+// =====================
+// GUEST WIFI ACCESS
+// =====================
+
+model GuestWifiAccess {
+  id String @id @default(uuid())
+
+  stayId String @unique
+
+  stay GuestStay @relation(fields: [stayId], references: [id])
+
+  username String?
+
+  password String?
+
+  accessUrl String?
+
+  token String @unique
+
+  status GuestWifiStatus @default(PENDING)
+
+  activatedAt DateTime?
+
+  expiresAt DateTime
+
+  deactivatedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([expiresAt])
 }
 
 // =====================
