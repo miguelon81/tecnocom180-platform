@@ -12,6 +12,10 @@ export interface Organization {
   email: string | null
   timezone: string
   active: boolean
+  sites?: Array<{
+    id: string
+    name: string
+  }>
 }
 
 export interface Area {

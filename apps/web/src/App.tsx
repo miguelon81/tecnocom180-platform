@@ -201,21 +201,6 @@ function App() {
           }
         />
 
-        {/* =====================================================
-            GUESTS
-        ===================================================== */}
-        <Route
-          path="/guests"
-          element={
-            isAuthenticated ? (
-              <AppLayout>
-                <GuestsPage />
-              </AppLayout>
-            ) : (
-              <Navigate to="/login" replace />
-            )
-          }
-        />
 
         {/* =====================================================
             ROOT

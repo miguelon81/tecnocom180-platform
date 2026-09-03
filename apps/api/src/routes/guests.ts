@@ -10,13 +10,119 @@ import {
 const guestsRouter = Router();
 
 // ============================================================
+// HELPERS
+// ============================================================
+
+/**
+ * Obtiene la organización permitida para el usuario.
+ *
+ * SUPER_ADMIN:
+ *   undefined = puede acceder a cualquier organización.
+ *
+ * Otros roles:
+ *   quedan limitados a su organización.
+ */
+function getOrganizationId(
+  req: AuthenticatedRequest,
+): string | undefined {
+  return req.user!.role === "SUPER_ADMIN"
+    ? undefined
+    : req.user!.organizationId;
+}
+
+/**
+ * Estados que realmente bloquean una habitación
+ * dentro del calendario de reservaciones.
+ *
+ * CHECKED_OUT y CANCELLED liberan la habitación.
+ */
+const blockingStayStatuses = [
+  "RESERVED",
+  "CHECKED_IN",
+] as const;
+
+/**
+ * Busca una estancia que se traslape con el intervalo solicitado.
+ *
+ * Regla:
+ *
+ * existing.checkIn < requested.checkOut
+ * AND
+ * existing.checkOut > requested.checkIn
+ *
+ * Esto permite reservas adyacentes:
+ *
+ * anterior: 01/09 14:00 → 05/09 12:00
+ * nueva:    05/09 14:00 → 08/09 12:00
+ */
+async function findOverlappingStay(
+  roomId: string,
+  start: Date,
+  end: Date,
+) {
+  return prisma.guestStay.findFirst({
+    where: {
+      roomId,
+      checkIn: {
+        lt: end,
+      },
+      checkOut: {
+        gt: start,
+      },
+      status: {
+        in: [...blockingStayStatuses],
+      },
+    },
+    include: {
+      guest: true,
+    },
+  });
+}
+
+/**
+ * Valida y convierte las fechas recibidas desde HTTP.
+ */
+function parseStayDates(
+  checkIn: unknown,
+  checkOut: unknown,
+) {
+  if (
+    typeof checkIn !== "string" ||
+    typeof checkOut !== "string"
+  ) {
+    return null;
+  }
+
+  const start = new Date(checkIn);
+  const end = new Date(checkOut);
+
+  if (
+    Number.isNaN(start.getTime()) ||
+    Number.isNaN(end.getTime()) ||
+    end <= start
+  ) {
+    return null;
+  }
+
+  return {
+    start,
+    end,
+  };
+}
+
+// ============================================================
 // GET /guests
 // ============================================================
 
 guestsRouter.get(
   "/",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN", "OPERATIONS", "RECEPTION"),
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "OPERATIONS",
+    "RECEPTION",
+  ),
   async (req: AuthenticatedRequest, res) => {
     try {
       const siteId =
@@ -24,10 +130,7 @@ guestsRouter.get(
           ? req.query.siteId
           : undefined;
 
-      const organizationId =
-        req.user!.role === "SUPER_ADMIN"
-          ? undefined
-          : req.user!.organizationId;
+      const organizationId = getOrganizationId(req);
 
       const guests = await prisma.guest.findMany({
         where: {
@@ -73,15 +176,17 @@ guestsRouter.get(
 guestsRouter.get(
   "/:id",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN", "OPERATIONS", "RECEPTION"),
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "OPERATIONS",
+    "RECEPTION",
+  ),
   async (req: AuthenticatedRequest, res) => {
     try {
       const guestId = req.params.id as string;
 
-      const organizationId =
-        req.user!.role === "SUPER_ADMIN"
-          ? undefined
-          : req.user!.organizationId;
+      const organizationId = getOrganizationId(req);
 
       const guest = await prisma.guest.findFirst({
         where: {
@@ -131,7 +236,12 @@ guestsRouter.get(
 guestsRouter.post(
   "/reservations",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN", "OPERATIONS", "RECEPTION"),
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "OPERATIONS",
+    "RECEPTION",
+  ),
   async (req: AuthenticatedRequest, res) => {
     try {
       const {
@@ -162,10 +272,7 @@ guestsRouter.post(
         });
       }
 
-      const organizationId =
-        req.user!.role === "SUPER_ADMIN"
-          ? undefined
-          : req.user!.organizationId;
+      const organizationId = getOrganizationId(req);
 
       // --------------------------------------------------------
       // Validate site
@@ -210,105 +317,135 @@ guestsRouter.post(
       // Validate dates
       // --------------------------------------------------------
 
-      const start = new Date(checkIn);
-      const end = new Date(checkOut);
+      const dates = parseStayDates(
+        checkIn,
+        checkOut,
+      );
 
-      if (
-        Number.isNaN(start.getTime()) ||
-        Number.isNaN(end.getTime()) ||
-        end <= start
-      ) {
+      if (!dates) {
         return res.status(400).json({
           error: "Invalid check-in/check-out dates",
         });
       }
 
+      const { start, end } = dates;
+
       // --------------------------------------------------------
-      // Room availability
+      // Create guest + stay atomically.
       //
-      // Adjacent reservations are allowed.
-      //
-      // Previous:
-      //   checkOut = 2026-09-06 14:00
-      //
-      // New:
-      //   checkIn  = 2026-09-06 14:00
-      //
-      // These do NOT overlap.
+      // Availability is checked inside the transaction so the
+      // reservation check and creation belong to the same DB
+      // operation.
       // --------------------------------------------------------
 
-      const overlappingStay =
-        await prisma.guestStay.findFirst({
-          where: {
-            roomId,
-            checkIn: {
-              lt: end,
+      const result = await prisma.$transaction(
+        async (tx) => {
+          const overlappingStay =
+            await tx.guestStay.findFirst({
+              where: {
+                roomId,
+                checkIn: {
+                  lt: end,
+                },
+                checkOut: {
+                  gt: start,
+                },
+                status: {
+                  in: [...blockingStayStatuses],
+                },
+              },
+              include: {
+                guest: true,
+              },
+            });
+
+          if (overlappingStay) {
+            const error = new Error(
+              "ROOM_ALREADY_RESERVED",
+            );
+
+            (
+              error as Error & {
+                conflictingStay?: unknown;
+              }
+            ).conflictingStay = overlappingStay;
+
+            throw error;
+          }
+
+          const guest = await tx.guest.create({
+            data: {
+              siteId,
+              name: name.trim(),
+              email: email?.trim() || null,
+              phone: phone?.trim() || null,
             },
-            checkOut: {
-              gt: start,
+          });
+
+          const stay = await tx.guestStay.create({
+            data: {
+              guestId: guest.id,
+              roomId,
+              checkIn: start,
+              checkOut: end,
+              notes: notes?.trim() || null,
+              status: "RESERVED",
             },
-            status: {
-              not: "CANCELLED",
+            include: {
+              room: true,
+              wifiAccess: true,
             },
-          },
-          include: {
-            guest: true,
-          },
-        });
+          });
 
-      if (overlappingStay) {
-        return res.status(409).json({
-          error:
-            "Room is already occupied during the requested dates",
-          roomId,
-          conflictingStay: {
-            id: overlappingStay.id,
-            guestId: overlappingStay.guestId,
-            guestName: overlappingStay.guest.name,
-            checkIn: overlappingStay.checkIn,
-            checkOut: overlappingStay.checkOut,
-            status: overlappingStay.status,
-          },
-        });
-      }
-
-      // --------------------------------------------------------
-      // Create guest + stay atomically
-      // --------------------------------------------------------
-
-      const result = await prisma.$transaction(async (tx) => {
-        const guest = await tx.guest.create({
-          data: {
-            siteId,
-            name: name.trim(),
-            email: email?.trim() || null,
-            phone: phone?.trim() || null,
-          },
-        });
-
-        const stay = await tx.guestStay.create({
-          data: {
-            guestId: guest.id,
-            roomId,
-            checkIn: start,
-            checkOut: end,
-            notes: notes?.trim() || null,
-            status: "RESERVED",
-          },
-          include: {
-            room: true,
-            wifiAccess: true,
-          },
-        });
-
-        return {
-          guest,
-          stay,
-        };
-      });
+          return {
+            guest,
+            stay,
+          };
+        },
+      );
 
       return res.status(201).json(result);
     } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === "ROOM_ALREADY_RESERVED"
+      ) {
+        const conflictingStay = (
+          error as Error & {
+            conflictingStay?: {
+              id: string;
+              guestId: string;
+              guest: {
+                name: string;
+              };
+              checkIn: Date;
+              checkOut: Date;
+              status: string;
+            };
+          }
+        ).conflictingStay;
+
+        return res.status(409).json({
+          error:
+            "Room is already occupied during the requested dates",
+          roomId: req.body.roomId,
+          conflictingStay: conflictingStay
+            ? {
+                id: conflictingStay.id,
+                guestId: conflictingStay.guestId,
+                guestName:
+                  conflictingStay.guest.name,
+                checkIn:
+                  conflictingStay.checkIn,
+                checkOut:
+                  conflictingStay.checkOut,
+                status:
+                  conflictingStay.status,
+              }
+            : undefined,
+        });
+      }
+
       console.error(
         "Error creating guest reservation:",
         error,
@@ -328,7 +465,12 @@ guestsRouter.post(
 guestsRouter.post(
   "/",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN", "OPERATIONS", "RECEPTION"),
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "OPERATIONS",
+    "RECEPTION",
+  ),
   async (req: AuthenticatedRequest, res) => {
     try {
       const {
@@ -344,10 +486,7 @@ guestsRouter.post(
         });
       }
 
-      const organizationId =
-        req.user!.role === "SUPER_ADMIN"
-          ? undefined
-          : req.user!.organizationId;
+      const organizationId = getOrganizationId(req);
 
       const site = await prisma.site.findFirst({
         where: {
@@ -365,9 +504,9 @@ guestsRouter.post(
       const guest = await prisma.guest.create({
         data: {
           siteId,
-          name,
-          email: email || null,
-          phone: phone || null,
+          name: name.trim(),
+          email: email?.trim() || null,
+          phone: phone?.trim() || null,
         },
       });
 
@@ -389,7 +528,12 @@ guestsRouter.post(
 guestsRouter.post(
   "/:id/stays",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN", "OPERATIONS", "RECEPTION"),
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "OPERATIONS",
+    "RECEPTION",
+  ),
   async (req: AuthenticatedRequest, res) => {
     try {
       const guestId = req.params.id as string;
@@ -403,14 +547,16 @@ guestsRouter.post(
 
       if (!roomId || !checkIn || !checkOut) {
         return res.status(400).json({
-          error: "roomId, checkIn and checkOut are required",
+          error:
+            "roomId, checkIn and checkOut are required",
         });
       }
 
-      const organizationId =
-        req.user!.role === "SUPER_ADMIN"
-          ? undefined
-          : req.user!.organizationId;
+      const organizationId = getOrganizationId(req);
+
+      // --------------------------------------------------------
+      // Validate guest
+      // --------------------------------------------------------
 
       const guest = await prisma.guest.findFirst({
         where: {
@@ -428,6 +574,10 @@ guestsRouter.post(
           error: "Guest not found",
         });
       }
+
+      // --------------------------------------------------------
+      // Validate room
+      // --------------------------------------------------------
 
       const room = await prisma.room.findFirst({
         where: {
@@ -452,77 +602,126 @@ guestsRouter.post(
         });
       }
 
-      const start = new Date(checkIn);
-      const end = new Date(checkOut);
+      // --------------------------------------------------------
+      // Validate dates
+      // --------------------------------------------------------
 
-      if (
-        Number.isNaN(start.getTime()) ||
-        Number.isNaN(end.getTime()) ||
-        end <= start
-      ) {
+      const dates = parseStayDates(
+        checkIn,
+        checkOut,
+      );
+
+      if (!dates) {
         return res.status(400).json({
           error: "Invalid check-in/check-out dates",
         });
       }
 
-        // ========================================================
-      // ROOM AVAILABILITY
-      // Prevent overlapping stays for the same room.
-      // Adjacent stays are allowed:
-      // previous.checkOut === new.checkIn
-      // ========================================================
+      const { start, end } = dates;
 
-   const overlappingStay = await prisma.guestStay.findFirst({
-  where: {
-    roomId,
-    checkIn: {
-      lt: end,
-    },
-    checkOut: {
-      gt: start,
-    },
-    status: {
-      in: ["RESERVED", "CHECKED_IN"],
-    },
-  },
-  include: {
-    guest: true,
-  },
-});
+      // --------------------------------------------------------
+      // Availability + creation
+      // --------------------------------------------------------
 
-      if (overlappingStay) {
-        return res.status(409).json({
-          error: "Room is already occupied during the requested dates",
-          roomId,
-          conflictingStay: {
-            id: overlappingStay.id,
-            guestId: overlappingStay.guestId,
-            guestName: overlappingStay.guest.name,
-            checkIn: overlappingStay.checkIn,
-            checkOut: overlappingStay.checkOut,
-            status: overlappingStay.status,
-          },
-        });
-      }
+      const stay = await prisma.$transaction(
+        async (tx) => {
+          const overlappingStay =
+            await tx.guestStay.findFirst({
+              where: {
+                roomId,
+                checkIn: {
+                  lt: end,
+                },
+                checkOut: {
+                  gt: start,
+                },
+                status: {
+                  in: [...blockingStayStatuses],
+                },
+              },
+              include: {
+                guest: true,
+              },
+            });
 
-      const stay = await prisma.guestStay.create({
-        data: {
-          guestId,
-          roomId,
-          checkIn: start,
-          checkOut: end,
-          notes: notes || null,
+          if (overlappingStay) {
+            const error = new Error(
+              "ROOM_ALREADY_RESERVED",
+            );
+
+            (
+              error as Error & {
+                conflictingStay?: unknown;
+              }
+            ).conflictingStay = overlappingStay;
+
+            throw error;
+          }
+
+          return tx.guestStay.create({
+            data: {
+              guestId,
+              roomId,
+              checkIn: start,
+              checkOut: end,
+              notes: notes?.trim() || null,
+              status: "RESERVED",
+            },
+            include: {
+              guest: true,
+              room: true,
+              wifiAccess: true,
+            },
+          });
         },
-        include: {
-          guest: true,
-          room: true,
-          wifiAccess: true,
-        },
-      });
+      );
 
       return res.status(201).json(stay);
     } catch (error) {
-      console.error("Error creating guest stay:", error);
+      if (
+        error instanceof Error &&
+        error.message === "ROOM_ALREADY_RESERVED"
+      ) {
+        const conflictingStay = (
+          error as Error & {
+            conflictingStay?: {
+              id: string;
+              guestId: string;
+              guest: {
+                name: string;
+              };
+              checkIn: Date;
+              checkOut: Date;
+              status: string;
+            };
+          }
+        ).conflictingStay;
+
+        return res.status(409).json({
+          error:
+            "Room is already occupied during the requested dates",
+          roomId: req.body.roomId,
+          conflictingStay: conflictingStay
+            ? {
+                id: conflictingStay.id,
+                guestId: conflictingStay.guestId,
+                guestName:
+                  conflictingStay.guest.name,
+                checkIn:
+                  conflictingStay.checkIn,
+                checkOut:
+                  conflictingStay.checkOut,
+                status:
+                  conflictingStay.status,
+              }
+            : undefined,
+        });
+      }
+
+      console.error(
+        "Error creating guest stay:",
+        error,
+      );
 
       return res.status(500).json({
         error: "Failed to create guest stay",
@@ -533,22 +732,23 @@ guestsRouter.post(
 
 // ============================================================
 // POST /guests/:guestId/stays/:stayId/checkin
-// Register guest check-in
 // ============================================================
 
 guestsRouter.post(
   "/:guestId/stays/:stayId/checkin",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN", "OPERATIONS", "RECEPTION"),
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "OPERATIONS",
+    "RECEPTION",
+  ),
   async (req: AuthenticatedRequest, res) => {
     try {
       const guestId = req.params.guestId as string;
       const stayId = req.params.stayId as string;
 
-      const organizationId =
-        req.user!.role === "SUPER_ADMIN"
-          ? undefined
-          : req.user!.organizationId;
+      const organizationId = getOrganizationId(req);
 
       const stay = await prisma.guestStay.findFirst({
         where: {
@@ -577,34 +777,30 @@ guestsRouter.post(
 
       if (stay.status !== "RESERVED") {
         return res.status(409).json({
-          error: "Only reserved stays can be checked in",
+          error:
+            "Only reserved stays can be checked in",
           status: stay.status,
         });
       }
 
       const now = new Date();
 
-      // ========================================================
-      // CHECK-IN WINDOW
-      //
-      // Hotel standard check-in: approximately 14:00
-      // Maximum early check-in: 5 hours
-      // Earliest allowed check-in: 09:00
-      //
-      // The guest cannot check in before the reservation date.
-      // ========================================================
+      // --------------------------------------------------------
+      // Check-in window
+      // --------------------------------------------------------
 
-      const scheduledCheckIn = new Date(stay.checkIn);
+      const scheduledCheckIn =
+        new Date(stay.checkIn);
 
       if (Number.isNaN(scheduledCheckIn.getTime())) {
         return res.status(400).json({
-          error: "Invalid reservation check-in date",
+          error:
+            "Invalid reservation check-in date",
         });
       }
 
-      // Use the calendar date of the reservation.
-      // The server runs using the hotel's local date/time.
-      const earliestCheckIn = new Date(scheduledCheckIn);
+      const earliestCheckIn =
+        new Date(scheduledCheckIn);
 
       earliestCheckIn.setHours(9, 0, 0, 0);
 
@@ -616,117 +812,139 @@ guestsRouter.post(
         });
       }
 
-      // ========================================================
-      // CHECK-OUT PROTECTION
-      // A reservation cannot be checked in after its checkout.
-      // ========================================================
+      // --------------------------------------------------------
+      // Reservation expiration
+      // --------------------------------------------------------
 
-      const scheduledCheckOut = new Date(stay.checkOut);
+      const scheduledCheckOut =
+        new Date(stay.checkOut);
 
       if (now >= scheduledCheckOut) {
         return res.status(409).json({
-          error: "The reservation has already expired",
+          error:
+            "The reservation has already expired",
           checkOut: stay.checkOut,
         });
       }
 
-      // ========================================================
-      // CHECK-IN + WIFI ACCESS
+      // --------------------------------------------------------
+      // Check room physical status
       //
-      // Check-in is the moment at which Internet access becomes
-      // available to the guest.
-      //
-      // If WiFi access already exists, activate/reuse it.
-      // If it does not exist, create it and activate it.
-      // ========================================================
+      // A room can be reserved while CLEANING or
+      // MAINTENANCE for a future date, but it should
+      // not be checked in until it is operational.
+      // --------------------------------------------------------
 
-      const checkedInStay = await prisma.$transaction(async (tx) => {
-        const roomNumber = stay.room.number.replace(/\s+/g, "");
-        const guestCode = guestId
-          .replace(/-/g, "")
-          .slice(0, 6)
-          .toUpperCase();
+      if (
+        stay.room.status === "MAINTENANCE" ||
+        stay.room.status === "CLEANING"
+      ) {
+        return res.status(409).json({
+          error:
+            "Room is not ready for check-in",
+          roomStatus: stay.room.status,
+        });
+      }
 
-        let wifiAccess = stay.wifiAccess;
+      // --------------------------------------------------------
+      // Check-in + WiFi
+      // --------------------------------------------------------
 
-        if (!wifiAccess) {
-          const token = crypto.randomUUID();
+      const checkedInStay =
+        await prisma.$transaction(async (tx) => {
+          const roomNumber =
+            stay.room.number.replace(/\s+/g, "");
 
-          wifiAccess = await tx.guestWifiAccess.create({
-            data: {
-              stayId: stay.id,
-              token,
-              status: "PENDING",
-              expiresAt: stay.checkOut,
-            },
-          });
-        }
+          const guestCode = guestId
+            .replace(/-/g, "")
+            .slice(0, 6)
+            .toUpperCase();
 
-        const username =
-          wifiAccess.username ||
-          `H${roomNumber}-${guestCode}`;
+          let wifiAccess = stay.wifiAccess;
 
-        const password =
-          wifiAccess.password ||
-          `TC180-${crypto
-            .randomBytes(4)
-            .toString("hex")
-            .toUpperCase()}`;
+          if (!wifiAccess) {
+            const token = crypto.randomUUID();
 
-        const accessUrl =
-          wifiAccess.accessUrl ||
-          `http://localhost:5173/guest-wifi/${wifiAccess.token}`;
+            wifiAccess =
+              await tx.guestWifiAccess.create({
+                data: {
+                  stayId: stay.id,
+                  token,
+                  status: "PENDING",
+                  expiresAt: stay.checkOut,
+                },
+              });
+          }
 
-        const updatedWifiAccess =
-          await tx.guestWifiAccess.update({
+          const username =
+            wifiAccess.username ||
+            `H${roomNumber}-${guestCode}`;
+
+          const password =
+            wifiAccess.password ||
+            `TC180-${crypto
+              .randomBytes(4)
+              .toString("hex")
+              .toUpperCase()}`;
+
+          const accessUrl =
+            wifiAccess.accessUrl ||
+            `http://localhost:5173/guest-wifi/${wifiAccess.token}`;
+
+          const updatedWifiAccess =
+            await tx.guestWifiAccess.update({
+              where: {
+                id: wifiAccess.id,
+              },
+              data: {
+                username,
+                password,
+                accessUrl,
+                status: "ACTIVE",
+                activatedAt:
+                  wifiAccess.activatedAt || now,
+                deactivatedAt: null,
+                expiresAt: stay.checkOut,
+              },
+            });
+
+          const updatedStay =
+            await tx.guestStay.update({
+              where: {
+                id: stay.id,
+              },
+              data: {
+                status: "CHECKED_IN",
+                actualCheckIn: now,
+              },
+              include: {
+                guest: true,
+                room: true,
+                wifiAccess: true,
+              },
+            });
+
+          await tx.room.update({
             where: {
-              id: wifiAccess.id,
+              id: stay.roomId,
             },
             data: {
-              username,
-              password,
-              accessUrl,
-              status: "ACTIVE",
-              activatedAt:
-                wifiAccess.activatedAt || now,
-              deactivatedAt: null,
-              expiresAt: stay.checkOut,
+              status: "OCCUPIED",
             },
           });
 
-        const updatedStay = await tx.guestStay.update({
-          where: {
-            id: stay.id,
-          },
-          data: {
-            status: "CHECKED_IN",
-            actualCheckIn: now,
-          },
-          include: {
-            guest: true,
-            room: true,
-            wifiAccess: true,
-          },
+          return {
+            ...updatedStay,
+            wifiAccess: updatedWifiAccess,
+          };
         });
-
-        await tx.room.update({
-          where: {
-            id: stay.roomId,
-          },
-          data: {
-            status: "OCCUPIED",
-          },
-        });
-
-        return {
-          ...updatedStay,
-          wifiAccess: updatedWifiAccess,
-        };
-      });
 
       return res.json(checkedInStay);
     } catch (error) {
-      console.error("Error checking in guest:", error);
+      console.error(
+        "Error checking in guest:",
+        error,
+      );
 
       return res.status(500).json({
         error: "Failed to check in guest",
@@ -737,22 +955,23 @@ guestsRouter.post(
 
 // ============================================================
 // POST /guests/:guestId/stays/:stayId/cancel
-// Cancel guest stay
 // ============================================================
 
 guestsRouter.post(
   "/:guestId/stays/:stayId/cancel",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN", "OPERATIONS", "RECEPTION"),
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "OPERATIONS",
+    "RECEPTION",
+  ),
   async (req: AuthenticatedRequest, res) => {
     try {
       const guestId = req.params.guestId as string;
       const stayId = req.params.stayId as string;
 
-      const organizationId =
-        req.user!.role === "SUPER_ADMIN"
-          ? undefined
-          : req.user!.organizationId;
+      const organizationId = getOrganizationId(req);
 
       const stay = await prisma.guestStay.findFirst({
         where: {
@@ -781,44 +1000,49 @@ guestsRouter.post(
 
       if (stay.status !== "RESERVED") {
         return res.status(409).json({
-          error: "Only reserved stays can be cancelled",
+          error:
+            "Only reserved stays can be cancelled",
           status: stay.status,
         });
       }
 
       const now = new Date();
 
-      const cancelledStay = await prisma.$transaction(async (tx) => {
-        if (stay.wifiAccess) {
-          await tx.guestWifiAccess.update({
+      const cancelledStay =
+        await prisma.$transaction(async (tx) => {
+          if (stay.wifiAccess) {
+            await tx.guestWifiAccess.update({
+              where: {
+                id: stay.wifiAccess.id,
+              },
+              data: {
+                status: "DISABLED",
+                deactivatedAt: now,
+              },
+            });
+          }
+
+          return tx.guestStay.update({
             where: {
-              id: stay.wifiAccess.id,
+              id: stay.id,
             },
             data: {
-              status: "DISABLED",
-              deactivatedAt: now,
+              status: "CANCELLED",
+            },
+            include: {
+              guest: true,
+              room: true,
+              wifiAccess: true,
             },
           });
-        }
-
-        return tx.guestStay.update({
-          where: {
-            id: stay.id,
-          },
-          data: {
-            status: "CANCELLED",
-          },
-          include: {
-            guest: true,
-            room: true,
-            wifiAccess: true,
-          },
         });
-      });
 
       return res.json(cancelledStay);
     } catch (error) {
-      console.error("Error cancelling guest stay:", error);
+      console.error(
+        "Error cancelling guest stay:",
+        error,
+      );
 
       return res.status(500).json({
         error: "Failed to cancel guest stay",
@@ -829,22 +1053,23 @@ guestsRouter.post(
 
 // ============================================================
 // POST /guests/:guestId/stays/:stayId/checkout
-// Register guest checkout
 // ============================================================
 
 guestsRouter.post(
   "/:guestId/stays/:stayId/checkout",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN", "OPERATIONS", "RECEPTION"),
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "OPERATIONS",
+    "RECEPTION",
+  ),
   async (req: AuthenticatedRequest, res) => {
     try {
       const guestId = req.params.guestId as string;
       const stayId = req.params.stayId as string;
 
-      const organizationId =
-        req.user!.role === "SUPER_ADMIN"
-          ? undefined
-          : req.user!.organizationId;
+      const organizationId = getOrganizationId(req);
 
       const stay = await prisma.guestStay.findFirst({
         where: {
@@ -873,54 +1098,59 @@ guestsRouter.post(
 
       if (stay.status !== "CHECKED_IN") {
         return res.status(409).json({
-          error: "Only checked-in stays can be checked out",
+          error:
+            "Only checked-in stays can be checked out",
           status: stay.status,
         });
       }
 
       const now = new Date();
 
-      const checkedOutStay = await prisma.$transaction(async (tx) => {
-        if (stay.wifiAccess) {
-          await tx.guestWifiAccess.update({
+      const checkedOutStay =
+        await prisma.$transaction(async (tx) => {
+          if (stay.wifiAccess) {
+            await tx.guestWifiAccess.update({
+              where: {
+                id: stay.wifiAccess.id,
+              },
+              data: {
+                status: "DISABLED",
+                deactivatedAt: now,
+              },
+            });
+          }
+
+          await tx.room.update({
             where: {
-              id: stay.wifiAccess.id,
+              id: stay.roomId,
             },
             data: {
-              status: "DISABLED",
-              deactivatedAt: now,
+              status: "CLEANING",
             },
           });
-        }
 
-        await tx.room.update({
-          where: {
-            id: stay.roomId,
-          },
-          data: {
-            status: "CLEANING",
-          },
+          return tx.guestStay.update({
+            where: {
+              id: stay.id,
+            },
+            data: {
+              status: "CHECKED_OUT",
+              actualCheckOut: now,
+            },
+            include: {
+              guest: true,
+              room: true,
+              wifiAccess: true,
+            },
+          });
         });
-
-        return tx.guestStay.update({
-          where: {
-            id: stay.id,
-          },
-          data: {
-            status: "CHECKED_OUT",
-            actualCheckOut: now,
-          },
-          include: {
-            guest: true,
-            room: true,
-            wifiAccess: true,
-          },
-        });
-      });
 
       return res.json(checkedOutStay);
     } catch (error) {
-      console.error("Error checking out guest:", error);
+      console.error(
+        "Error checking out guest:",
+        error,
+      );
 
       return res.status(500).json({
         error: "Failed to check out guest",
@@ -936,16 +1166,18 @@ guestsRouter.post(
 guestsRouter.post(
   "/:guestId/stays/:stayId/wifi",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN", "OPERATIONS", "RECEPTION"),
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "OPERATIONS",
+    "RECEPTION",
+  ),
   async (req: AuthenticatedRequest, res) => {
     try {
       const guestId = req.params.guestId as string;
       const stayId = req.params.stayId as string;
 
-      const organizationId =
-        req.user!.role === "SUPER_ADMIN"
-          ? undefined
-          : req.user!.organizationId;
+      const organizationId = getOrganizationId(req);
 
       const stay = await prisma.guestStay.findFirst({
         where: {
@@ -974,21 +1206,23 @@ guestsRouter.post(
 
       if (stay.wifiAccess) {
         return res.status(409).json({
-          error: "WiFi access already exists for this stay",
+          error:
+            "WiFi access already exists for this stay",
           wifiAccess: stay.wifiAccess,
         });
       }
 
       const token = crypto.randomUUID();
 
-      const wifiAccess = await prisma.guestWifiAccess.create({
-        data: {
-          stayId: stay.id,
-          token,
-          status: "PENDING",
-          expiresAt: stay.checkOut,
-        },
-      });
+      const wifiAccess =
+        await prisma.guestWifiAccess.create({
+          data: {
+            stayId: stay.id,
+            token,
+            status: "PENDING",
+            expiresAt: stay.checkOut,
+          },
+        });
 
       return res.status(201).json({
         wifiAccess,
@@ -1002,10 +1236,14 @@ guestsRouter.post(
         },
       });
     } catch (error) {
-      console.error("Error creating guest WiFi access:", error);
+      console.error(
+        "Error creating guest WiFi access:",
+        error,
+      );
 
       return res.status(500).json({
-        error: "Failed to create guest WiFi access",
+        error:
+          "Failed to create guest WiFi access",
       });
     }
   },
@@ -1018,16 +1256,18 @@ guestsRouter.post(
 guestsRouter.post(
   "/:guestId/stays/:stayId/wifi/activate",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN", "OPERATIONS", "RECEPTION"),
+  requireRole(
+    "SUPER_ADMIN",
+    "ORG_ADMIN",
+    "OPERATIONS",
+    "RECEPTION",
+  ),
   async (req: AuthenticatedRequest, res) => {
     try {
       const guestId = req.params.guestId as string;
       const stayId = req.params.stayId as string;
 
-      const organizationId =
-        req.user!.role === "SUPER_ADMIN"
-          ? undefined
-          : req.user!.organizationId;
+      const organizationId = getOrganizationId(req);
 
       const stay = await prisma.guestStay.findFirst({
         where: {
@@ -1056,13 +1296,15 @@ guestsRouter.post(
 
       if (!stay.wifiAccess) {
         return res.status(404).json({
-          error: "WiFi access has not been created for this stay",
+          error:
+            "WiFi access has not been created for this stay",
         });
       }
 
       if (stay.wifiAccess.status === "ACTIVE") {
         return res.status(409).json({
-          error: "WiFi access is already active",
+          error:
+            "WiFi access is already active",
           wifiAccess: stay.wifiAccess,
         });
       }
@@ -1075,35 +1317,45 @@ guestsRouter.post(
         });
       }
 
-      // ========================================================
+      // --------------------------------------------------------
       // DEMO CREDENTIALS
-      // ========================================================
+      // --------------------------------------------------------
 
-      const roomNumber = stay.room.number.replace(/\s+/g, "");
-      const guestCode = guestId.replace(/-/g, "").slice(0, 6).toUpperCase();
+      const roomNumber =
+        stay.room.number.replace(/\s+/g, "");
 
-      const username = `H${roomNumber}-${guestCode}`;
-      const password = `TC180-${crypto
-        .randomBytes(4)
-        .toString("hex")
-        .toUpperCase()}`;
+      const guestCode = guestId
+        .replace(/-/g, "")
+        .slice(0, 6)
+        .toUpperCase();
 
-      const accessUrl = `http://localhost:5173/guest-wifi/${stay.wifiAccess.token}`;
+      const username =
+        `H${roomNumber}-${guestCode}`;
 
-      const wifiAccess = await prisma.guestWifiAccess.update({
-        where: {
-          id: stay.wifiAccess.id,
-        },
-        data: {
-          username,
-          password,
-          accessUrl,
-          status: "ACTIVE",
-          activatedAt: now,
-          deactivatedAt: null,
-          expiresAt: stay.checkOut,
-        },
-      });
+      const password =
+        `TC180-${crypto
+          .randomBytes(4)
+          .toString("hex")
+          .toUpperCase()}`;
+
+      const accessUrl =
+        `http://localhost:5173/guest-wifi/${stay.wifiAccess.token}`;
+
+      const wifiAccess =
+        await prisma.guestWifiAccess.update({
+          where: {
+            id: stay.wifiAccess.id,
+          },
+          data: {
+            username,
+            password,
+            accessUrl,
+            status: "ACTIVE",
+            activatedAt: now,
+            deactivatedAt: null,
+            expiresAt: stay.checkOut,
+          },
+        });
 
       return res.json({
         wifiAccess,
@@ -1118,10 +1370,14 @@ guestsRouter.post(
         mode: "DEMO",
       });
     } catch (error) {
-      console.error("Error activating guest WiFi access:", error);
+      console.error(
+        "Error activating guest WiFi access:",
+        error,
+      );
 
       return res.status(500).json({
-        error: "Failed to activate guest WiFi access",
+        error:
+          "Failed to activate guest WiFi access",
       });
     }
   },

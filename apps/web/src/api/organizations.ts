@@ -1,20 +1,7 @@
-﻿import { apiFetch } from './client'
+﻿import type { Organization } from '../types/site'
+import { apiFetch } from './client'
 
-export type Organization = {
-  id: string
-  name: string
-  slug: string
-  phone?: string | null
-  email?: string | null
-  timezone?: string | null
-  active: boolean
-  createdAt?: string
-  updatedAt?: string
-  sites?: Array<{
-    id: string
-    name: string
-  }>
-}
+export type { Organization }
 
 async function parseError(response: Response): Promise<string> {
   try {

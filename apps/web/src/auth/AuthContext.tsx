@@ -94,6 +94,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         setUser(currentUser)
       } catch {
+        localStorage.removeItem(TOKEN_KEY)
+        localStorage.removeItem(USER_KEY)
+
         setToken(null)
         setUser(null)
       } finally {
@@ -105,13 +108,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [token])
 
   async function login(email: string, password: string) {
-    const result = await apiLogin(email, password)
+    setLoading(true)
 
-    setToken(result.token)
-    setUser(result.user)
+    try {
+      const result = await apiLogin(email, password)
+
+      /*
+       * Persistimos primero en localStorage.
+       *
+       * Esto garantiza que cualquier llamada posterior que utilice
+       * apiFetch() pueda encontrar inmediatamente el JWT.
+       */
+      localStorage.setItem(TOKEN_KEY, result.token)
+      localStorage.setItem(USER_KEY, JSON.stringify(result.user))
+
+      /*
+       * Después actualizamos el estado de React.
+       */
+      setToken(result.token)
+      setUser(result.user)
+    } finally {
+      setLoading(false)
+    }
   }
 
   function logout() {
+    localStorage.removeItem(TOKEN_KEY)
+    localStorage.removeItem(USER_KEY)
+
     setToken(null)
     setUser(null)
   }

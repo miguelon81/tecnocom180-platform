@@ -1,13 +1,22 @@
-﻿import { useEffect, useState } from 'react'
+﻿import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
+
 import {
   createSite,
   deleteSite,
   getSites,
   updateSite,
 } from '../api/sites'
-import type { CreateSiteInput, UpdateSiteInput } from '../api/sites'
-import type { Site } from '../types/site'
+
+import type {
+  CreateSiteInput,
+  UpdateSiteInput,
+} from '../api/sites'
+
+import { getOrganizations } from '../api/organizations'
+
+import type { Organization, Site } from '../types/site'
+
 import { useAuth } from '../auth/AuthContext'
 
 type SiteForm = {
@@ -21,7 +30,7 @@ type SiteForm = {
   active: boolean
 }
 
-const emptyForm: SiteForm = {
+const EMPTY_FORM: SiteForm = {
   organizationId: '',
   name: '',
   code: '',
@@ -32,59 +41,157 @@ const emptyForm: SiteForm = {
   active: true,
 }
 
-function SitesPage() {
+export default function SitesPage() {
+  const { user: currentUser } = useAuth()
+
   const [sites, setSites] = useState<Site[]>([])
+  const [organizations, setOrganizations] = useState<Organization[]>([])
+
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
+  const [loadingOrganizations, setLoadingOrganizations] = useState(false)
+
   const [error, setError] = useState<string | null>(null)
-  const [formError, setFormError] = useState<string | null>(null)
 
   const [showForm, setShowForm] = useState(false)
   const [editingSite, setEditingSite] = useState<Site | null>(null)
-  const [form, setForm] = useState<SiteForm>(emptyForm)
 
-const { user: currentUser } = useAuth()
+  const [form, setForm] = useState<SiteForm>(EMPTY_FORM)
 
-const isSuperAdmin =
-  currentUser?.role === 'SUPER_ADMIN'
+  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
+  const isOrgAdmin = currentUser?.role === 'ORG_ADMIN'
 
+  const canManageSites = isSuperAdmin || isOrgAdmin
+
+  /*
+   * Carga de sitios.
+   *
+   * El backend ya aplica el aislamiento por organización.
+   * No enviamos organizationId manualmente porque el JWT
+   * es la fuente de verdad para ORG_ADMIN/RECEPTION/TECHNICIAN.
+   */
   async function loadSites() {
     try {
-      setLoading(true)
       setError(null)
 
       const data = await getSites()
+
       setSites(data)
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : 'Error al cargar los sitios',
+          : 'No se pudieron cargar los sitios',
       )
     } finally {
       setLoading(false)
     }
   }
 
+  /*
+   * Las organizaciones solamente son necesarias para SUPER_ADMIN,
+   * porque es el único rol que puede administrar múltiples
+   * organizaciones.
+   */
+  async function loadOrganizations() {
+    if (!isSuperAdmin) {
+      return
+    }
+
+    try {
+      setLoadingOrganizations(true)
+
+      const data = await getOrganizations()
+
+      setOrganizations(data)
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'No se pudieron cargar las organizaciones',
+      )
+    } finally {
+      setLoadingOrganizations(false)
+    }
+  }
+
   useEffect(() => {
-    loadSites()
+    void loadSites()
   }, [])
 
-function openCreateForm() {
-  setEditingSite(null)
+  useEffect(() => {
+    void loadOrganizations()
+  }, [isSuperAdmin])
 
-  setForm({
-    ...emptyForm,
-    organizationId:
-      currentUser?.organizationId ?? '',
-  })
+  /*
+   * En teoría el backend ya devuelve los sitios correctos.
+   *
+   * Este filtro adicional evita mostrar accidentalmente un sitio
+   * de otra organización si en el futuro cambia el comportamiento
+   * de la API.
+   */
+  const visibleSites = useMemo(() => {
+    if (!currentUser) {
+      return []
+    }
 
-  setFormError(null)
-  setShowForm(true)
-}  
+    if (isSuperAdmin) {
+      return sites
+    }
+
+    return sites.filter(
+      (site) => site.organizationId === currentUser.organizationId,
+    )
+  }, [sites, currentUser, isSuperAdmin])
+
+  function resetForm() {
+    setForm({
+      ...EMPTY_FORM,
+      organizationId: currentUser?.organizationId ?? '',
+    })
+
+    setEditingSite(null)
+    setShowForm(false)
+  }
+
+  function openCreateForm() {
+    if (!canManageSites) {
+      return
+    }
+
+    setEditingSite(null)
+
+    setForm({
+      ...EMPTY_FORM,
+      organizationId: currentUser?.organizationId ?? '',
+    })
+
+    setError(null)
+    setShowForm(true)
+  }
 
   function openEditForm(site: Site) {
+    if (!canManageSites) {
+      return
+    }
+
+    /*
+     * Protección adicional en frontend.
+     *
+     * ORG_ADMIN no puede editar sitios de otra organización.
+     */
+    if (
+      !isSuperAdmin &&
+      site.organizationId !== currentUser?.organizationId
+    ) {
+      setError(
+        'No puedes editar un sitio fuera de tu organización.',
+      )
+
+      return
+    }
+
     setEditingSite(site)
+
     setForm({
       organizationId: site.organizationId,
       name: site.name,
@@ -95,27 +202,17 @@ function openCreateForm() {
       country: site.country ?? 'México',
       active: site.active,
     })
-    setFormError(null)
+
+    setError(null)
     setShowForm(true)
-  }
-
-  function closeForm() {
-    if (saving) {
-      return
-    }
-
-    setShowForm(false)
-    setEditingSite(null)
-    setForm(emptyForm)
-    setFormError(null)
   }
 
   function handleChange(
     field: keyof SiteForm,
     value: string | boolean,
   ) {
-    setForm((current) => ({
-      ...current,
+    setForm((previous) => ({
+      ...previous,
       [field]: value,
     }))
   }
@@ -123,120 +220,151 @@ function openCreateForm() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
-   if (
-  !isSuperAdmin &&
-  currentUser?.organizationId !== form.organizationId
-) {
-  setFormError(
-    'No puedes crear un sitio fuera de tu organización',
-  )
-  return
-}
+    if (!currentUser) {
+      setError('No hay un usuario autenticado.')
+      return
+    }
 
     if (!form.name.trim()) {
-      setFormError('El nombre del sitio es obligatorio')
+      setError('El nombre del sitio es obligatorio.')
       return
     }
 
     if (!form.code.trim()) {
-      setFormError('El código del sitio es obligatorio')
+      setError('El código del sitio es obligatorio.')
+      return
+    }
+
+    /*
+     * Para ORG_ADMIN la organización siempre viene del usuario.
+     *
+     * Aunque alguien manipule el frontend, nunca permitimos
+     * enviar otra organización.
+     */
+    const organizationId = isSuperAdmin
+      ? form.organizationId
+      : currentUser.organizationId
+
+    if (!organizationId) {
+      setError('Debes seleccionar una organización.')
+      return
+    }
+
+    /*
+     * Validación adicional para SUPER_ADMIN.
+     */
+    if (
+      isSuperAdmin &&
+      !organizations.some(
+        (organization) => organization.id === organizationId,
+      )
+    ) {
+      setError('La organización seleccionada no es válida.')
+      return
+    }
+
+    /*
+     * ORG_ADMIN solamente puede trabajar dentro de su organización.
+     */
+    if (
+      !isSuperAdmin &&
+      organizationId !== currentUser.organizationId
+    ) {
+      setError(
+        'No puedes crear o modificar un sitio fuera de tu organización.',
+      )
+
       return
     }
 
     try {
-      setSaving(true)
-      setFormError(null)
+      setError(null)
 
       if (editingSite) {
         const data: UpdateSiteInput = {
           name: form.name.trim(),
           code: form.code.trim(),
-          address: form.address.trim(),
-          city: form.city.trim(),
-          state: form.state.trim(),
-          country: form.country.trim(),
+          address: form.address.trim() || undefined,
+city: form.city.trim() || undefined,
+state: form.state.trim() || undefined,
+country: form.country.trim() || undefined,
           active: form.active,
         }
 
-        const updatedSite = await updateSite(
-          editingSite.id,
-          data,
-        )
-
-        setSites((current) =>
-          current.map((site) =>
-            site.id === updatedSite.id
-              ? updatedSite
-              : site,
-          ),
-        )
+        await updateSite(editingSite.id, data)
       } else {
         const data: CreateSiteInput = {
-          organizationId: form.organizationId.trim(),
+          organizationId,
           name: form.name.trim(),
           code: form.code.trim(),
-          address: form.address.trim(),
-          city: form.city.trim(),
-          state: form.state.trim(),
-          country: form.country.trim(),
+         address: form.address.trim() || undefined,
+city: form.city.trim() || undefined,
+state: form.state.trim() || undefined,
+country: form.country.trim() || undefined,
           active: form.active,
         }
 
-        const createdSite = await createSite(data)
-
-        setSites((current) =>
-          [...current, createdSite].sort((a, b) =>
-            a.name.localeCompare(b.name),
-          ),
-        )
+        await createSite(data)
       }
 
-      closeForm()
-    } catch (err) {
-      setFormError(
-        err instanceof Error
-          ? err.message
-          : 'Error al guardar el sitio',
-      )
-    } finally {
-      setSaving(false)
-    }
-  }
+      resetForm()
 
-  async function handleToggleActive(site: Site) {
-    try {
-      setError(null)
-
-      const updatedSite = await updateSite(site.id, {
-        active: !site.active,
-      })
-
-      setSites((current) =>
-        current.map((item) =>
-          item.id === updatedSite.id
-            ? updatedSite
-            : item,
-        ),
-      )
+      await loadSites()
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : 'Error al cambiar el estado del sitio',
+          : 'No se pudo guardar el sitio',
+      )
+    }
+  }
+
+  async function handleToggleActive(site: Site) {
+    if (!canManageSites) {
+      return
+    }
+
+    if (
+      !isSuperAdmin &&
+      site.organizationId !== currentUser?.organizationId
+    ) {
+      setError(
+        'No puedes modificar un sitio fuera de tu organización.',
+      )
+
+      return
+    }
+
+    try {
+      setError(null)
+
+      await updateSite(site.id, {
+        active: !site.active,
+      })
+
+      await loadSites()
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'No se pudo actualizar el sitio',
       )
     }
   }
 
   async function handleDelete(site: Site) {
-    const hasRelatedData =
-      site.rooms.length > 0 ||
-      site.areas.length > 0 ||
-      site.devices.length > 0
+    if (!canManageSites) {
+      return
+    }
 
-    if (hasRelatedData) {
+    if (
+      !isSuperAdmin &&
+      site.organizationId !== currentUser?.organizationId
+    ) {
       setError(
-        'No se puede eliminar este sitio porque tiene habitaciones, áreas o dispositivos relacionados.',
+        'No puedes eliminar un sitio fuera de tu organización.',
       )
+
       return
     }
 
@@ -253,424 +381,438 @@ function openCreateForm() {
 
       await deleteSite(site.id)
 
-      setSites((current) =>
-        current.filter((item) => item.id !== site.id),
-      )
+      await loadSites()
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : 'Error al eliminar el sitio',
+          : 'No se pudo eliminar el sitio',
       )
     }
   }
 
+  function getOrganizationName(site: Site) {
+    if (site.organization?.name) {
+      return site.organization.name
+    }
+
+    const organization = organizations.find(
+      (item) => item.id === site.organizationId,
+    )
+
+    return organization?.name ?? site.organizationId
+  }
+
   if (loading) {
     return (
-      <main className="page">
-        <p>Cargando sitios...</p>
-      </main>
+      <div className="p-6">
+        <h1 className="text-2xl font-semibold">
+          Sitios
+        </h1>
+
+        <p className="mt-4 text-gray-600">
+          Cargando sitios...
+        </p>
+      </div>
     )
   }
 
   return (
-    <main className="page">
-      <header className="page-header">
+    <div className="p-6">
+      <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <p className="eyebrow">TECNOCOM180 PLATFORM</p>
+          <h1 className="text-2xl font-semibold">
+            Sitios
+          </h1>
 
-          <h1>Sitios</h1>
-
-          <p className="subtitle">
-            Gestión y supervisión de infraestructura
-            tecnológica.
+          <p className="mt-1 text-sm text-gray-600">
+            {isSuperAdmin
+              ? 'Administración de sitios de todas las organizaciones.'
+              : 'Sitios disponibles dentro de tu organización.'}
           </p>
         </div>
 
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '16px',
-          }}
-        >
-          <div className="site-count">
-            {sites.length}{' '}
-            {sites.length === 1 ? 'sitio' : 'sitios'}
-          </div>
-
+        {canManageSites && (
           <button
             type="button"
             onClick={openCreateForm}
+            className="rounded bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
           >
             + Nuevo sitio
           </button>
-        </div>
-      </header>
+        )}
+      </div>
 
       {error && (
-        <div
-          style={{
-            marginBottom: '20px',
-            padding: '12px 16px',
-            borderRadius: '8px',
-            border: '1px solid #dc2626',
-          }}
-        >
+        <div className="mb-6 rounded border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
       )}
 
-      {showForm && (
-        <section
-          style={{
-            marginBottom: '24px',
-            padding: '24px',
-            borderRadius: '12px',
-            border: '1px solid #d1d5db',
-          }}
-        >
-          <div className="page-header">
-            <div>
-              <p className="eyebrow">
-                {editingSite
-                  ? 'EDITAR SITIO'
-                  : 'NUEVO SITIO'}
-              </p>
+      {showForm && canManageSites && (
+        <div className="mb-8 rounded-lg border bg-white p-6 shadow-sm">
+          <div className="mb-6 flex items-center justify-between">
+            <h2 className="text-xl font-semibold">
+              {editingSite
+                ? 'Editar sitio'
+                : 'Nuevo sitio'}
+            </h2>
 
-              <h2>
-                {editingSite
-                  ? editingSite.name
-                  : 'Registrar sitio'}
-              </h2>
-            </div>
+            <button
+              type="button"
+              onClick={resetForm}
+              className="text-sm text-gray-600 hover:text-gray-900"
+            >
+              Cancelar
+            </button>
           </div>
 
-          {formError && (
-            <div
-              style={{
-                marginBottom: '16px',
-                padding: '10px 14px',
-                borderRadius: '8px',
-                border: '1px solid #dc2626',
-              }}
-            >
-              {formError}
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit}>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns:
-                  'repeat(auto-fit, minmax(220px, 1fr))',
-                gap: '16px',
-              }}
-            >
-         
-              {!editingSite && isSuperAdmin && (
-                <label>
+          <form
+            onSubmit={handleSubmit}
+            className="grid grid-cols-1 gap-4 md:grid-cols-2"
+          >
+            {isSuperAdmin && !editingSite && (
+              <label className="flex flex-col gap-1 md:col-span-2">
+                <span className="text-sm font-medium">
                   Organización
-                  <input
-                    type="text"
-                    value={form.organizationId}
-                    onChange={(event) =>
-                      handleChange(
-                        'organizationId',
-                        event.target.value,
-                      )
-                    }
-                    placeholder="ID de organización"
-                  />
-                </label>
-              )}
+                </span>
 
-              <label>
+                <select
+                  value={form.organizationId}
+                  onChange={(event) =>
+                    handleChange(
+                      'organizationId',
+                      event.target.value,
+                    )
+                  }
+                  disabled={loadingOrganizations}
+                  className="rounded border px-3 py-2"
+                  required
+                >
+                  <option value="">
+                    {loadingOrganizations
+                      ? 'Cargando organizaciones...'
+                      : 'Selecciona una organización'}
+                  </option>
+
+                  {organizations
+                    .filter((organization) => organization.active)
+                    .map((organization) => (
+                      <option
+                        key={organization.id}
+                        value={organization.id}
+                      >
+                        {organization.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            )}
+
+            {!isSuperAdmin && (
+              <div className="rounded bg-gray-50 px-3 py-2 text-sm md:col-span-2">
+                <span className="font-medium">
+                  Organización:
+                </span>{' '}
+                {currentUser?.organizationId}
+              </div>
+            )}
+
+            {editingSite && (
+              <div className="rounded bg-gray-50 px-3 py-2 text-sm md:col-span-2">
+                <span className="font-medium">
+                  Organización:
+                </span>{' '}
+                {getOrganizationName(editingSite)}
+              </div>
+            )}
+
+            <label className="flex flex-col gap-1">
+              <span className="text-sm font-medium">
                 Nombre
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={(event) =>
-                    handleChange(
-                      'name',
-                      event.target.value,
-                    )
-                  }
-                  placeholder="Hotel Demo"
-                />
-              </label>
+              </span>
 
-              <label>
+              <input
+                type="text"
+                value={form.name}
+                onChange={(event) =>
+                  handleChange('name', event.target.value)
+                }
+                className="rounded border px-3 py-2"
+                placeholder="Hotel TECNOCOM180"
+                required
+              />
+            </label>
+
+            <label className="flex flex-col gap-1">
+              <span className="text-sm font-medium">
                 Código
-                <input
-                  type="text"
-                  value={form.code}
-                  onChange={(event) =>
-                    handleChange(
-                      'code',
-                      event.target.value.toUpperCase(),
-                    )
-                  }
-                  placeholder="HOTEL-001"
-                />
-              </label>
+              </span>
 
-              <label>
+              <input
+                type="text"
+                value={form.code}
+                onChange={(event) =>
+                  handleChange('code', event.target.value)
+                }
+                className="rounded border px-3 py-2"
+                placeholder="HOTEL-001"
+                required
+              />
+            </label>
+
+            <label className="flex flex-col gap-1 md:col-span-2">
+              <span className="text-sm font-medium">
                 Dirección
-                <input
-                  type="text"
-                  value={form.address}
-                  onChange={(event) =>
-                    handleChange(
-                      'address',
-                      event.target.value,
-                    )
-                  }
-                  placeholder="Dirección"
-                />
-              </label>
+              </span>
 
-              <label>
+              <input
+                type="text"
+                value={form.address}
+                onChange={(event) =>
+                  handleChange(
+                    'address',
+                    event.target.value,
+                  )
+                }
+                className="rounded border px-3 py-2"
+                placeholder="Dirección del sitio"
+              />
+            </label>
+
+            <label className="flex flex-col gap-1">
+              <span className="text-sm font-medium">
                 Ciudad
-                <input
-                  type="text"
-                  value={form.city}
-                  onChange={(event) =>
-                    handleChange(
-                      'city',
-                      event.target.value,
-                    )
-                  }
-                  placeholder="Puebla"
-                />
-              </label>
+              </span>
 
-              <label>
+              <input
+                type="text"
+                value={form.city}
+                onChange={(event) =>
+                  handleChange('city', event.target.value)
+                }
+                className="rounded border px-3 py-2"
+              />
+            </label>
+
+            <label className="flex flex-col gap-1">
+              <span className="text-sm font-medium">
                 Estado
-                <input
-                  type="text"
-                  value={form.state}
-                  onChange={(event) =>
-                    handleChange(
-                      'state',
-                      event.target.value,
-                    )
-                  }
-                  placeholder="Puebla"
-                />
-              </label>
+              </span>
 
-              <label>
+              <input
+                type="text"
+                value={form.state}
+                onChange={(event) =>
+                  handleChange('state', event.target.value)
+                }
+                className="rounded border px-3 py-2"
+              />
+            </label>
+
+            <label className="flex flex-col gap-1">
+              <span className="text-sm font-medium">
                 País
-                <input
-                  type="text"
-                  value={form.country}
-                  onChange={(event) =>
-                    handleChange(
-                      'country',
-                      event.target.value,
-                    )
-                  }
-                  placeholder="México"
-                />
-              </label>
+              </span>
 
-              <label
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={form.active}
-                  onChange={(event) =>
-                    handleChange(
-                      'active',
-                      event.target.checked,
-                    )
-                  }
-                />
+              <input
+                type="text"
+                value={form.country}
+                onChange={(event) =>
+                  handleChange(
+                    'country',
+                    event.target.value,
+                  )
+                }
+                className="rounded border px-3 py-2"
+              />
+            </label>
 
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={form.active}
+                onChange={(event) =>
+                  handleChange(
+                    'active',
+                    event.target.checked,
+                  )
+                }
+              />
+
+              <span className="text-sm font-medium">
                 Sitio activo
-              </label>
-            </div>
+              </span>
+            </label>
 
-            <div
-              style={{
-                display: 'flex',
-                gap: '12px',
-                marginTop: '20px',
-              }}
-            >
+            <div className="flex gap-3 md:col-span-2">
               <button
                 type="submit"
-                disabled={saving}
+                className="rounded bg-blue-600 px-5 py-2 font-medium text-white hover:bg-blue-700"
               >
-                {saving
-                  ? 'Guardando...'
-                  : editingSite
-                    ? 'Guardar cambios'
-                    : 'Crear sitio'}
+                {editingSite
+                  ? 'Guardar cambios'
+                  : 'Crear sitio'}
               </button>
 
               <button
                 type="button"
-                onClick={closeForm}
-                disabled={saving}
+                onClick={resetForm}
+                className="rounded border px-5 py-2 font-medium hover:bg-gray-50"
               >
                 Cancelar
               </button>
             </div>
           </form>
-        </section>
+        </div>
       )}
 
-      <section className="sites-grid">
-        {sites.map((site) => {
-        
-const onlineDevices =
-  site.devices.filter(
-    (device) => device.online,
-  ).length
+      {visibleSites.length === 0 ? (
+        <div className="rounded-lg border bg-white p-8 text-center text-gray-500">
+          No hay sitios disponibles.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+          {visibleSites.map((site) => {
+            const onlineDevices = site.devices.filter(
+              (device) => device.online,
+            ).length
 
-          const offlineDevices =
-            site.devices.length - onlineDevices
+            const offlineDevices =
+              site.devices.length - onlineDevices
 
-          return (
-            <article
-              className="site-card"
-              key={site.id}
-            >
-              <div className="site-card-header">
-                <div>
-                  <p className="site-code">
-                    {site.code}
-                  </p>
-
-                  <h2>{site.name}</h2>
-                </div>
-
-                <span
-                  className={`status ${
-                    site.active
-                      ? 'status-active'
-                      : 'status-inactive'
-                  }`}
-                >
-                  {site.active
-                    ? 'Activo'
-                    : 'Inactivo'}
-                </span>
-              </div>
-
-              <p className="site-location">
-                {site.city ?? '-'}
-                {site.state
-                  ? `, ${site.state}`
-                  : ''}
-                {site.country
-                  ? `, ${site.country}`
-                  : ''}
-              </p>
-
-              <div className="site-stats">
-                <div>
-                  <strong>
-                    {site.rooms.length}
-                  </strong>
-                  <span>Habitaciones</span>
-                </div>
-
-                <div>
-                  <strong>
-                    {site.areas.length}
-                  </strong>
-                  <span>Áreas</span>
-                </div>
-
-                <div>
-                  <strong>
-                    {site.devices.length}
-                  </strong>
-                  <span>Dispositivos</span>
-                </div>
-              </div>
-
-              <div className="device-status">
-                <span>
-                  <i className="dot dot-online" />
-                  {onlineDevices} online
-                </span>
-
-                <span>
-                  <i className="dot dot-offline" />
-                  {offlineDevices} offline
-                </span>
-              </div>
-
+            return (
               <div
-                style={{
-                  display: 'flex',
-                  gap: '8px',
-                  marginTop: '18px',
-                  flexWrap: 'wrap',
-                }}
+                key={site.id}
+                className="rounded-lg border bg-white p-6 shadow-sm"
               >
-                <button
-                  type="button"
-                  onClick={() =>
-                    openEditForm(site)
-                  }
-                >
-                  Editar
-                </button>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-xl font-semibold">
+                      {site.name}
+                    </h2>
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    handleToggleActive(site)
-                  }
-                >
-                  {site.active
-                    ? 'Desactivar'
-                    : 'Activar'}
-                </button>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Código: {site.code}
+                    </p>
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    handleDelete(site)
-                  }
-                >
-                  Eliminar
-                </button>
+                    {isSuperAdmin && (
+                      <p className="mt-1 text-sm text-gray-500">
+                        Organización:{' '}
+                        {getOrganizationName(site)}
+                      </p>
+                    )}
+                  </div>
+
+                  <span
+                    className={`rounded-full px-3 py-1 text-xs font-medium ${
+                      site.active
+                        ? 'bg-green-100 text-green-700'
+                        : 'bg-gray-100 text-gray-600'
+                    }`}
+                  >
+                    {site.active
+                      ? 'Activo'
+                      : 'Inactivo'}
+                  </span>
+                </div>
+
+                <div className="mt-4 space-y-1 text-sm text-gray-600">
+                  {site.address && (
+                    <p>{site.address}</p>
+                  )}
+
+                  {(site.city || site.state) && (
+                    <p>
+                      {[site.city, site.state]
+                        .filter(Boolean)
+                        .join(', ')}
+                    </p>
+                  )}
+
+                  {site.country && (
+                    <p>{site.country}</p>
+                  )}
+                </div>
+
+                <div className="mt-6 grid grid-cols-3 gap-3">
+                  <div className="rounded bg-gray-50 p-3 text-center">
+                    <div className="text-xl font-semibold">
+                      {site.areas.length}
+                    </div>
+
+                    <div className="text-xs text-gray-500">
+                      Áreas
+                    </div>
+                  </div>
+
+                  <div className="rounded bg-gray-50 p-3 text-center">
+                    <div className="text-xl font-semibold">
+                      {site.rooms.length}
+                    </div>
+
+                    <div className="text-xs text-gray-500">
+                      Habitaciones
+                    </div>
+                  </div>
+
+                  <div className="rounded bg-gray-50 p-3 text-center">
+                    <div className="text-xl font-semibold">
+                      {site.devices.length}
+                    </div>
+
+                    <div className="text-xs text-gray-500">
+                      Dispositivos
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex gap-4 text-sm">
+                  <span className="text-green-700">
+                    {onlineDevices} en línea
+                  </span>
+
+                  <span className="text-gray-500">
+                    {offlineDevices} fuera de línea
+                  </span>
+                </div>
+
+                {canManageSites && (
+                  <div className="mt-6 flex flex-wrap gap-2 border-t pt-4">
+                    <button
+                      type="button"
+                      onClick={() => openEditForm(site)}
+                      className="rounded border px-3 py-2 text-sm hover:bg-gray-50"
+                    >
+                      Editar
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void handleToggleActive(site)
+                      }
+                      className="rounded border px-3 py-2 text-sm hover:bg-gray-50"
+                    >
+                      {site.active
+                        ? 'Desactivar'
+                        : 'Activar'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => void handleDelete(site)}
+                      className="rounded border border-red-300 px-3 py-2 text-sm text-red-600 hover:bg-red-50"
+                    >
+                      Eliminar
+                    </button>
+                  </div>
+                )}
               </div>
-            </article>
-          )
-        })}
-      </section>
-
-      {sites.length === 0 && (
-        <section>
-          <p>
-            No hay sitios registrados.
-          </p>
-
-          {!showForm && (
-            <button
-              type="button"
-              onClick={openCreateForm}
-            >
-              Crear primer sitio
-            </button>
-          )}
-        </section>
+            )
+          })}
+        </div>
       )}
-    </main>
+    </div>
   )
 }
-
-export default SitesPage

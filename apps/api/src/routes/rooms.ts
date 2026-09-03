@@ -80,15 +80,19 @@ roomsRouter.get(
         organizationId = req.user!.organizationId;
       }
 
-      const rooms = await prisma.room.findMany({
-        where: organizationId
-          ? {
-              site: {
-                organizationId,
-              },
-            }
-          : undefined,
-        include: roomInclude,
+     const rooms = await prisma.room.findMany({
+  where: requestedSiteId
+    ? {
+        siteId: requestedSiteId,
+      }
+    : organizationId
+      ? {
+          site: {
+            organizationId,
+          },
+        }
+      : undefined,
+  include: roomInclude,
         orderBy: [
           {
             siteId: "asc",
