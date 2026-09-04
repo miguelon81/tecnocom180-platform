@@ -331,6 +331,8 @@ model GuestStay {
 
   notes String?
 
+  wifiMaxDevices Int @default(2)
+
   wifiAccess GuestWifiAccess?
 
   createdAt DateTime @default(now())
@@ -365,6 +367,8 @@ model GuestWifiAccess {
 
   status GuestWifiStatus @default(PENDING)
 
+  maxDevices Int @default(2)
+
   activatedAt DateTime?
 
   expiresAt DateTime
@@ -374,6 +378,7 @@ model GuestWifiAccess {
   createdAt DateTime @default(now())
 
   updatedAt DateTime @updatedAt
+
 
   @@index([status])
   @@index([expiresAt])

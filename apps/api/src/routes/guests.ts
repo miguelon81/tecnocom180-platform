@@ -253,6 +253,7 @@ guestsRouter.post(
         checkIn,
         checkOut,
         notes,
+        wifiMaxDevices,
       } = req.body;
 
       // --------------------------------------------------------
@@ -390,6 +391,12 @@ guestsRouter.post(
               checkOut: end,
               notes: notes?.trim() || null,
               status: "RESERVED",
+              wifiMaxDevices:
+                Number.isInteger(wifiMaxDevices) &&
+                wifiMaxDevices >= 1 &&
+                wifiMaxDevices <= 10
+                ? wifiMaxDevices
+                : 2,
             },
             include: {
               room: true,
@@ -872,6 +879,7 @@ guestsRouter.post(
                   token,
                   status: "PENDING",
                   expiresAt: stay.checkOut,
+                  maxDevices: stay.wifiMaxDevices,
                 },
               });
           }
@@ -905,6 +913,7 @@ guestsRouter.post(
                   wifiAccess.activatedAt || now,
                 deactivatedAt: null,
                 expiresAt: stay.checkOut,
+                maxDevices: stay.wifiMaxDevices,
               },
             });
 

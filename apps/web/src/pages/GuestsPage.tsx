@@ -4,11 +4,13 @@ import {
   useState,
 } from 'react'
 import type { FormEvent } from 'react'
+import { QRCodeSVG } from 'qrcode.react'
 import { apiFetch } from '../api/client'
 import { useSites } from '../sites/SiteContext'
 
 const HOTEL_CHECK_IN_TIME = '14:00'
 const HOTEL_CHECK_OUT_TIME = '12:00'
+const QR_AUTO_CLOSE_MS = 60_000
 
 type WifiAccess = {
   id: string
@@ -25,6 +27,7 @@ type WifiAccess = {
   activatedAt: string | null
   expiresAt: string
   deactivatedAt: string | null
+  maxDevices?: number
 }
 
 type Room = {
@@ -47,6 +50,7 @@ type Stay = {
     | 'CHECKED_OUT'
     | 'CANCELLED'
   notes: string | null
+  wifiMaxDevices?: number
   room: Room
   wifiAccess: WifiAccess | null
 }
@@ -58,6 +62,13 @@ type Guest = {
   email: string | null
   phone: string | null
   stays: Stay[]
+}
+
+type WifiQrInfo = {
+  wifi: WifiAccess
+  guestName: string
+  roomNumber: string
+  maxDevices: number
 }
 
 export default function GuestsPage() {
@@ -74,35 +85,29 @@ export default function GuestsPage() {
   const [rooms, setRooms] = useState<Room[]>([])
 
   const [loading, setLoading] = useState(true)
-  const [loadingRooms, setLoadingRooms] =
-    useState(false)
+  const [loadingRooms, setLoadingRooms] = useState(false)
   const [error, setError] = useState('')
 
   const [showReservationForm, setShowReservationForm] =
     useState(false)
-
   const [creatingReservation, setCreatingReservation] =
     useState(false)
 
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
-
   const [roomId, setRoomId] = useState('')
   const [checkIn, setCheckIn] = useState('')
   const [checkOut, setCheckOut] = useState('')
   const [notes, setNotes] = useState('')
+  const [wifiMaxDevices, setWifiMaxDevices] = useState(2)
 
   const [actionId, setActionId] =
     useState<string | null>(null)
 
-  /*
-   * Fuerza una actualización periódica de la estancia
-   * que se muestra como actual.
-   *
-   * Esto evita que getCurrentStay() quede congelado
-   * durante mucho tiempo si la página permanece abierta.
-   */
+  const [qrWifi, setQrWifi] =
+    useState<WifiQrInfo | null>(null)
+
   const [, setCurrentTimeTick] = useState(0)
 
   useEffect(() => {
@@ -115,9 +120,20 @@ export default function GuestsPage() {
     }
   }, [])
 
-  /*
-   * Carga los huéspedes del sitio seleccionado.
-   */
+  useEffect(() => {
+    if (!qrWifi) {
+      return
+    }
+
+    const timeout = window.setTimeout(() => {
+      setQrWifi(null)
+    }, QR_AUTO_CLOSE_MS)
+
+    return () => {
+      window.clearTimeout(timeout)
+    }
+  }, [qrWifi])
+
   async function loadGuests(
     siteId: string = selectedSiteId ?? '',
   ) {
@@ -134,9 +150,7 @@ export default function GuestsPage() {
         `/guests?siteId=${encodeURIComponent(siteId)}`,
       )
 
-      const data = await response
-        .json()
-        .catch(() => null)
+      const data = await response.json().catch(() => null)
 
       if (!response.ok) {
         throw new Error(
@@ -145,14 +159,9 @@ export default function GuestsPage() {
         )
       }
 
-      setGuests(
-        Array.isArray(data)
-          ? data
-          : [],
-      )
+      setGuests(Array.isArray(data) ? data : [])
     } catch (err) {
       setGuests([])
-
       setError(
         err instanceof Error
           ? err.message
@@ -163,9 +172,6 @@ export default function GuestsPage() {
     }
   }
 
-  /*
-   * Carga las habitaciones del sitio seleccionado.
-   */
   async function loadRooms(
     siteId: string = selectedSiteId ?? '',
   ) {
@@ -181,9 +187,7 @@ export default function GuestsPage() {
         `/rooms?siteId=${encodeURIComponent(siteId)}`,
       )
 
-      const data = await response
-        .json()
-        .catch(() => null)
+      const data = await response.json().catch(() => null)
 
       if (!response.ok) {
         throw new Error(
@@ -192,14 +196,9 @@ export default function GuestsPage() {
         )
       }
 
-      setRooms(
-        Array.isArray(data)
-          ? data
-          : [],
-      )
+      setRooms(Array.isArray(data) ? data : [])
     } catch (err) {
       setRooms([])
-
       setError(
         err instanceof Error
           ? err.message
@@ -210,17 +209,10 @@ export default function GuestsPage() {
     }
   }
 
-  /*
-   * Cuando cambia el sitio seleccionado:
-   *
-   * 1. Cerramos el formulario.
-   * 2. Limpiamos los datos del sitio anterior.
-   * 3. Cargamos huéspedes y habitaciones del nuevo sitio.
-   */
   useEffect(() => {
     setShowReservationForm(false)
+    setQrWifi(null)
     resetReservationForm()
-
     setGuests([])
     setRooms([])
     setError('')
@@ -245,25 +237,15 @@ export default function GuestsPage() {
     setCheckIn('')
     setCheckOut('')
     setNotes('')
+    setWifiMaxDevices(2)
   }
 
-  /*
-   * Las fechas introducidas por el usuario representan
-   * fechas/horas del hotel.
-   *
-   * Se construyen explícitamente en UTC para evitar que
-   * el navegador del usuario modifique la fecha según
-   * su zona horaria local.
-   */
   function buildHotelDateTime(
     date: string,
     time: string,
   ): Date {
-    const [year, month, day] =
-      date.split('-').map(Number)
-
-    const [hours, minutes] =
-      time.split(':').map(Number)
+    const [year, month, day] = date.split('-').map(Number)
+    const [hours, minutes] = time.split(':').map(Number)
 
     if (
       !Number.isInteger(year) ||
@@ -287,10 +269,6 @@ export default function GuestsPage() {
       ),
     )
 
-    /*
-     * Validación adicional para detectar fechas
-     * imposibles como 2026-02-31.
-     */
     if (
       result.getUTCFullYear() !== year ||
       result.getUTCMonth() !== month - 1 ||
@@ -324,18 +302,6 @@ export default function GuestsPage() {
     setError('')
   }
 
-  /*
-   * Calcula las habitaciones disponibles según
-   * las fechas seleccionadas.
-   *
-   * Una habitación NO está disponible si tiene
-   * una estancia RESERVED o CHECKED_IN que se
-   * traslape con el periodo solicitado.
-   *
-   * CHECKED_OUT y CANCELLED no bloquean.
-   *
-   * MAINTENANCE y CLEANING tampoco se ofrecen.
-   */
   const availableRooms = useMemo(() => {
     if (!checkIn || !checkOut) {
       return []
@@ -354,27 +320,14 @@ export default function GuestsPage() {
       )
 
     if (
-      Number.isNaN(
-        requestedStart.getTime(),
-      ) ||
-      Number.isNaN(
-        requestedEnd.getTime(),
-      ) ||
+      Number.isNaN(requestedStart.getTime()) ||
+      Number.isNaN(requestedEnd.getTime()) ||
       requestedEnd <= requestedStart
     ) {
       return []
     }
 
     return rooms.filter((room) => {
-      /*
-       * Estado físico de la habitación.
-       *
-       * AVAILABLE y OCCUPIED pueden aparecer aquí
-       * porque la disponibilidad de reservas se calcula
-       * mediante fechas.
-       *
-       * MAINTENANCE y CLEANING no se ofrecen.
-       */
       if (
         room.status === 'MAINTENANCE' ||
         room.status === 'CLEANING'
@@ -395,37 +348,16 @@ export default function GuestsPage() {
 
             const existingStart =
               new Date(stay.checkIn)
-
             const existingEnd =
               new Date(stay.checkOut)
 
             if (
-              Number.isNaN(
-                existingStart.getTime(),
-              ) ||
-              Number.isNaN(
-                existingEnd.getTime(),
-              )
+              Number.isNaN(existingStart.getTime()) ||
+              Number.isNaN(existingEnd.getTime())
             ) {
               return false
             }
 
-            /*
-             * Regla de traslape:
-             *
-             * existente empieza antes de que
-             * termine la nueva
-             *
-             * Y
-             *
-             * existente termina después de que
-             * empiece la nueva.
-             *
-             * Esto permite reservas consecutivas:
-             *
-             * 01 → 03
-             * 03 → 05
-             */
             return (
               requestedStart < existingEnd &&
               requestedEnd > existingStart
@@ -442,11 +374,6 @@ export default function GuestsPage() {
     checkOut,
   ])
 
-  /*
-   * Si la habitación seleccionada deja de estar
-   * disponible al cambiar las fechas, se limpia
-   * automáticamente.
-   */
   useEffect(() => {
     if (
       roomId &&
@@ -464,9 +391,7 @@ export default function GuestsPage() {
     event.preventDefault()
 
     if (!selectedSiteId) {
-      setError(
-        'No hay un sitio seleccionado',
-      )
+      setError('No hay un sitio seleccionado')
       return
     }
 
@@ -519,17 +444,10 @@ export default function GuestsPage() {
     }
 
     if (!roomId) {
-      setError(
-        'La habitación es obligatoria',
-      )
+      setError('La habitación es obligatoria')
       return
     }
 
-    /*
-     * Segunda protección en frontend:
-     * comprobar nuevamente que la habitación
-     * siga disponible antes de enviar.
-     */
     const selectedRoomIsAvailable =
       availableRooms.some(
         (room) => room.id === roomId,
@@ -553,31 +471,19 @@ export default function GuestsPage() {
           body: JSON.stringify({
             siteId: selectedSiteId,
             name: name.trim(),
-            email:
-              email.trim() || null,
-            phone:
-              phone.trim() || null,
+            email: email.trim() || null,
+            phone: phone.trim() || null,
             roomId,
-            checkIn:
-              start.toISOString(),
-            checkOut:
-              end.toISOString(),
-            notes:
-              notes.trim() || null,
+            checkIn: start.toISOString(),
+            checkOut: end.toISOString(),
+            notes: notes.trim() || null,
+            wifiMaxDevices,
           }),
         },
       )
 
-      const data = await response
-        .json()
-        .catch(() => null)
+      const data = await response.json().catch(() => null)
 
-      /*
-       * El backend es la autoridad final.
-       *
-       * Si otro usuario acaba de reservar la misma
-       * habitación, recibiremos HTTP 409.
-       */
       if (response.status === 409) {
         setRoomId('')
 
@@ -601,14 +507,6 @@ export default function GuestsPage() {
       setShowReservationForm(false)
       resetReservationForm()
 
-      /*
-       * Actualizamos ambos conjuntos de datos.
-       *
-       * Las habitaciones no cambian físicamente al crear
-       * una reserva, pero sí necesitamos actualizar los
-       * huéspedes para que la nueva reserva bloquee
-       * correctamente las fechas en el filtro frontend.
-       */
       await Promise.all([
         loadGuests(selectedSiteId),
         loadRooms(selectedSiteId),
@@ -629,9 +527,7 @@ export default function GuestsPage() {
     action: string,
   ) {
     if (!selectedSiteId) {
-      setError(
-        'No hay un sitio seleccionado',
-      )
+      setError('No hay un sitio seleccionado')
       return
     }
 
@@ -646,9 +542,7 @@ export default function GuestsPage() {
         },
       )
 
-      const data = await response
-        .json()
-        .catch(() => null)
+      const data = await response.json().catch(() => null)
 
       if (!response.ok) {
         throw new Error(
@@ -657,12 +551,6 @@ export default function GuestsPage() {
         )
       }
 
-      /*
-       * Checkout y cancelación pueden cambiar
-       * la disponibilidad física/operativa.
-       *
-       * Por eso refrescamos huéspedes y habitaciones.
-       */
       await Promise.all([
         loadGuests(selectedSiteId),
         loadRooms(selectedSiteId),
@@ -692,10 +580,9 @@ export default function GuestsPage() {
     guest: Guest,
     stay: Stay,
   ) {
-    const confirmed =
-      window.confirm(
-        `¿Registrar salida de ${guest.name} de la habitación ${stay.room.number}?`,
-      )
+    const confirmed = window.confirm(
+      `¿Registrar salida de ${guest.name} de la habitación ${stay.room.number}?`,
+    )
 
     if (!confirmed) {
       return
@@ -711,10 +598,9 @@ export default function GuestsPage() {
     guest: Guest,
     stay: Stay,
   ) {
-    const confirmed =
-      window.confirm(
-        `¿Cancelar la estancia de ${guest.name} en la habitación ${stay.room.number}?`,
-      )
+    const confirmed = window.confirm(
+      `¿Cancelar la estancia de ${guest.name} en la habitación ${stay.room.number}?`,
+    )
 
     if (!confirmed) {
       return
@@ -746,24 +632,24 @@ export default function GuestsPage() {
     )
   }
 
-  /*
-   * Los timestamps guardados por el sistema representan
-   * las horas del hotel en UTC.
-   *
-   * Mostramos también en UTC para evitar que el navegador
-   * convierta 14:00 en otra hora dependiendo de la zona
-   * horaria del equipo.
-   */
-  function formatDate(
-    value: string,
-  ) {
-    return new Date(
-      value,
-    ).toLocaleString(
+  function formatDate(value: string) {
+    return new Date(value).toLocaleString(
       'es-MX',
       {
         dateStyle: 'short',
         timeStyle: 'short',
+        timeZone: 'UTC',
+      },
+    )
+  }
+
+  function formatShortDate(value: string) {
+    return new Date(value).toLocaleDateString(
+      'es-MX',
+      {
+        day: '2-digit',
+        month: '2-digit',
+        year: '2-digit',
         timeZone: 'UTC',
       },
     )
@@ -775,86 +661,68 @@ export default function GuestsPage() {
     switch (status) {
       case 'ACTIVE':
         return 'Activo'
-
       case 'PENDING':
         return 'Pendiente'
-
       case 'EXPIRED':
         return 'Expirado'
-
       case 'DISABLED':
         return 'Desactivado'
-
       default:
         return status
     }
   }
 
-  /*
-   * Determina qué estancia debe mostrarse como
-   * la estancia principal del huésped.
-   *
-   * Prioridad:
-   *
-   * 1. CHECKED_IN actualmente activa.
-   * 2. RESERVED actualmente activa.
-   * 3. Próxima reserva futura.
-   * 4. Última estancia histórica.
-   */
+  function stayStatusLabel(
+    status: Stay['status'],
+  ) {
+    switch (status) {
+      case 'RESERVED':
+        return 'Reservado'
+      case 'CHECKED_IN':
+        return 'Hospedado'
+      case 'CHECKED_OUT':
+        return 'Finalizado'
+      case 'CANCELLED':
+        return 'Cancelado'
+      default:
+        return status
+    }
+  }
+
   function getCurrentStay(
     guest: Guest,
   ): Stay | undefined {
     const now = Date.now()
 
-    const validStays =
-      guest.stays.filter(
-        (stay) =>
-          stay.status !== 'CANCELLED' &&
-          !Number.isNaN(
-            new Date(
-              stay.checkIn,
-            ).getTime(),
-          ) &&
-          !Number.isNaN(
-            new Date(
-              stay.checkOut,
-            ).getTime(),
-          ),
-      )
+    const validStays = guest.stays.filter(
+      (stay) =>
+        stay.status !== 'CANCELLED' &&
+        !Number.isNaN(
+          new Date(stay.checkIn).getTime(),
+        ) &&
+        !Number.isNaN(
+          new Date(stay.checkOut).getTime(),
+        ),
+    )
 
     const checkedInActive =
       validStays
         .filter((stay) => {
-          if (
-            stay.status !==
-            'CHECKED_IN'
-          ) {
+          if (stay.status !== 'CHECKED_IN') {
             return false
           }
 
           const start =
-            new Date(
-              stay.checkIn,
-            ).getTime()
-
+            new Date(stay.checkIn).getTime()
           const end =
-            new Date(
-              stay.checkOut,
-            ).getTime()
+            new Date(stay.checkOut).getTime()
 
-          return (
-            now >= start &&
-            now < end
-          )
+          return now >= start && now < end
         })
         .sort(
           (a, b) =>
-            new Date(
-              b.checkIn,
-            ).getTime() -
-            new Date(
-              a.checkIn,
-            ).getTime(),
+            new Date(b.checkIn).getTime() -
+            new Date(a.checkIn).getTime(),
         )[0]
 
     if (checkedInActive) {
@@ -864,36 +732,21 @@ export default function GuestsPage() {
     const reservedActive =
       validStays
         .filter((stay) => {
-          if (
-            stay.status !==
-            'RESERVED'
-          ) {
+          if (stay.status !== 'RESERVED') {
             return false
           }
 
           const start =
-            new Date(
-              stay.checkIn,
-            ).getTime()
-
+            new Date(stay.checkIn).getTime()
           const end =
-            new Date(
-              stay.checkOut,
-            ).getTime()
+            new Date(stay.checkOut).getTime()
 
-          return (
-            now >= start &&
-            now < end
-          )
+          return now >= start && now < end
         })
         .sort(
           (a, b) =>
-            new Date(
-              b.checkIn,
-            ).getTime() -
-            new Date(
-              a.checkIn,
-            ).getTime(),
+            new Date(b.checkIn).getTime() -
+            new Date(a.checkIn).getTime(),
         )[0]
 
     if (reservedActive) {
@@ -904,18 +757,12 @@ export default function GuestsPage() {
       validStays
         .filter(
           (stay) =>
-            new Date(
-              stay.checkIn,
-            ).getTime() > now,
+            new Date(stay.checkIn).getTime() > now,
         )
         .sort(
           (a, b) =>
-            new Date(
-              a.checkIn,
-            ).getTime() -
-            new Date(
-              b.checkIn,
-            ).getTime(),
+            new Date(a.checkIn).getTime() -
+            new Date(b.checkIn).getTime(),
         )[0]
 
     if (nextStay) {
@@ -924,41 +771,91 @@ export default function GuestsPage() {
 
     return validStays.sort(
       (a, b) =>
-        new Date(
-          b.checkOut,
-        ).getTime() -
-        new Date(
-          a.checkOut,
-        ).getTime(),
+        new Date(b.checkOut).getTime() -
+        new Date(a.checkOut).getTime(),
     )[0]
   }
 
-  /*
-   * Mapa memoizado para no ejecutar
-   * getCurrentStay() repetidamente durante
-   * cada render de la tabla.
-   */
-  const currentStaysMap =
-    useMemo(() => {
-      const map =
-        new Map<
-          string,
-          Stay | undefined
-        >()
+  const currentStaysMap = useMemo(() => {
+    const map =
+      new Map<string, Stay | undefined>()
 
-      guests.forEach(
-        (guest) => {
-          map.set(
-            guest.id,
-            getCurrentStay(
-              guest,
-            ),
-          )
-        },
+    guests.forEach((guest) => {
+      map.set(
+        guest.id,
+        getCurrentStay(guest),
       )
+    })
 
-      return map
-    }, [guests])
+    return map
+  }, [guests])
+
+  const visibleGuests = useMemo(() => {
+    return [...guests].sort((a, b) => {
+      const stayA = currentStaysMap.get(a.id)
+      const stayB = currentStaysMap.get(b.id)
+
+      if (!stayA && !stayB) {
+        return a.name.localeCompare(b.name)
+      }
+
+      if (!stayA) {
+        return 1
+      }
+
+      if (!stayB) {
+        return -1
+      }
+
+      const roomCompare =
+        stayA.room.number.localeCompare(
+          stayB.room.number,
+          undefined,
+          {
+            numeric: true,
+          },
+        )
+
+      if (roomCompare !== 0) {
+        return roomCompare
+      }
+
+      return (
+        new Date(stayA.checkIn).getTime() -
+        new Date(stayB.checkIn).getTime()
+      )
+    })
+  }, [
+    guests,
+    currentStaysMap,
+  ])
+
+  const counters = useMemo(() => {
+    let checkedIn = 0
+    let reserved = 0
+
+    visibleGuests.forEach((guest) => {
+      const stay =
+        currentStaysMap.get(guest.id)
+
+      if (stay?.status === 'CHECKED_IN') {
+        checkedIn += 1
+      }
+
+      if (stay?.status === 'RESERVED') {
+        reserved += 1
+      }
+    })
+
+    return {
+      checkedIn,
+      reserved,
+      total: visibleGuests.length,
+    }
+  }, [
+    visibleGuests,
+    currentStaysMap,
+  ])
 
   function renderStayActions(
     guest: Guest,
@@ -968,17 +865,13 @@ export default function GuestsPage() {
       `${guest.id}:${stay.id}:`
 
     const isBusy =
-      actionId ===
-        `${busyPrefix}checkin` ||
-      actionId ===
-        `${busyPrefix}checkout` ||
-      actionId ===
-        `${busyPrefix}cancel`
+      actionId === `${busyPrefix}checkin` ||
+      actionId === `${busyPrefix}checkout` ||
+      actionId === `${busyPrefix}cancel`
 
     return (
-      <div className="flex flex-wrap gap-2">
-        {stay.status ===
-          'RESERVED' && (
+      <div className="guest-action-group">
+        {stay.status === 'RESERVED' && (
           <>
             <button
               type="button"
@@ -989,10 +882,9 @@ export default function GuestsPage() {
                   stay,
                 )
               }
-              className="rounded-lg bg-black px-3 py-2 text-xs text-white disabled:opacity-50"
+              className="guest-btn guest-btn-primary guest-btn-small"
             >
-              {actionId ===
-              `${busyPrefix}checkin`
+              {actionId === `${busyPrefix}checkin`
                 ? 'Registrando...'
                 : 'Check-in'}
             </button>
@@ -1006,18 +898,16 @@ export default function GuestsPage() {
                   stay,
                 )
               }
-              className="rounded-lg border px-3 py-2 text-xs hover:bg-gray-50 disabled:opacity-50"
+              className="guest-btn guest-btn-secondary guest-btn-small"
             >
-              {actionId ===
-              `${busyPrefix}cancel`
+              {actionId === `${busyPrefix}cancel`
                 ? 'Cancelando...'
                 : 'Cancelar'}
             </button>
           </>
         )}
 
-        {stay.status ===
-          'CHECKED_IN' && (
+        {stay.status === 'CHECKED_IN' && (
           <button
             type="button"
             disabled={isBusy}
@@ -1027,26 +917,17 @@ export default function GuestsPage() {
                 stay,
               )
             }
-            className="rounded-lg bg-black px-3 py-2 text-xs text-white disabled:opacity-50"
+            className="guest-btn guest-btn-primary guest-btn-small"
           >
-            {actionId ===
-            `${busyPrefix}checkout`
+            {actionId === `${busyPrefix}checkout`
               ? 'Registrando...'
               : 'Check-out'}
           </button>
         )}
 
-        {stay.status ===
-          'CHECKED_OUT' && (
-          <span className="text-xs text-gray-500">
-            Estancia finalizada
-          </span>
-        )}
-
-        {stay.status ===
-          'CANCELLED' && (
-          <span className="text-xs text-gray-500">
-            Estancia cancelada
+        {stay.status === 'CHECKED_OUT' && (
+          <span className="guest-muted">
+            Finalizada
           </span>
         )}
       </div>
@@ -1057,24 +938,22 @@ export default function GuestsPage() {
     guest: Guest,
     stay: Stay,
   ) {
-    /*
-     * El acceso WiFi pertenece al CHECK-IN.
-     * No mostramos acciones WiFi para una reserva
-     * que todavía no ha recibido al huésped.
-     */
-    if (
-      stay.status ===
-      'RESERVED'
-    ) {
+    if (stay.status === 'RESERVED') {
       return (
-        <span className="text-xs text-gray-500">
-          Se habilita al hacer check-in
-        </span>
+        <div className="guest-wifi-summary">
+          <span className="guest-wifi-dot guest-wifi-dot-pending" />
+          <div>
+            <strong>Al check-in</strong>
+            <small>
+              {stay.wifiMaxDevices ?? 2}{' '}
+              dispositivos
+            </small>
+          </div>
+        </div>
       )
     }
 
-    const wifi =
-      stay.wifiAccess
+    const wifi = stay.wifiAccess
 
     if (!wifi) {
       const id =
@@ -1083,44 +962,37 @@ export default function GuestsPage() {
       return (
         <button
           type="button"
-          disabled={
-            actionId === id
-          }
+          disabled={actionId === id}
           onClick={() =>
             void handleCreateWifi(
               guest,
               stay,
             )
           }
-          className="rounded-lg border px-3 py-2 text-xs hover:bg-gray-50 disabled:opacity-50"
+          className="guest-btn guest-btn-secondary guest-btn-small"
         >
           {actionId === id
             ? 'Creando...'
-            : 'Crear acceso WiFi'}
+            : 'Crear WiFi'}
         </button>
       )
     }
 
-    if (
-      wifi.status ===
-      'PENDING'
-    ) {
+    if (wifi.status === 'PENDING') {
       const id =
         `${guest.id}:${stay.id}:wifi-activate`
 
       return (
         <button
           type="button"
-          disabled={
-            actionId === id
-          }
+          disabled={actionId === id}
           onClick={() =>
             void handleActivateWifi(
               guest,
               stay,
             )
           }
-          className="rounded-lg bg-black px-3 py-2 text-xs text-white disabled:opacity-50"
+          className="guest-btn guest-btn-primary guest-btn-small"
         >
           {actionId === id
             ? 'Activando...'
@@ -1129,109 +1001,93 @@ export default function GuestsPage() {
       )
     }
 
-if (
-  wifi.status ===
-  'ACTIVE'
-) {
-  return (
-    <div className="space-y-1">
-      <div className="font-medium">
-        Acceso activo
-      </div>
+    if (wifi.status === 'ACTIVE') {
+      const maxDevices =
+        wifi.maxDevices ??
+        stay.wifiMaxDevices ??
+        2
 
-      {wifi.username && (
-        <div className="text-xs text-gray-500">
-          Usuario:{' '}
-          {wifi.username}
-        </div>
-      )}
+      return (
+        <div className="guest-wifi-cell">
+          <div className="guest-wifi-summary">
+            <span className="guest-wifi-dot guest-wifi-dot-active" />
 
-      {wifi.expiresAt && (
-        <div className="text-xs text-gray-500">
-          Expira:{' '}
-          {formatDate(
-            wifi.expiresAt,
+            <div>
+              <strong>
+                {wifi.username ||
+                  'WiFi activo'}
+              </strong>
+
+              <small>
+                {maxDevices}{' '}
+                {maxDevices === 1
+                  ? 'dispositivo'
+                  : 'dispositivos'}
+              </small>
+            </div>
+          </div>
+
+          {wifi.accessUrl && (
+            <div className="guest-wifi-links">
+              <button
+                type="button"
+                onClick={() =>
+                  setQrWifi({
+                    wifi,
+                    guestName:
+                      guest.name,
+                    roomNumber:
+                      stay.room.number,
+                    maxDevices,
+                  })
+                }
+                className="guest-link-button"
+              >
+                QR
+              </button>
+
+            </div>
           )}
         </div>
-      )}
-
-      {wifi.accessUrl && (
-        <div className="pt-1">
-          <a
-            href={wifi.accessUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-block rounded-lg border px-3 py-2 text-xs hover:bg-gray-50"
-          >
-            Ver acceso
-          </a>
-        </div>
-      )}
-    </div>
-  )
-}   
+      )
+    }
 
     return (
-      <div className="text-xs text-gray-500">
-        {wifiStatusLabel(
-          wifi.status,
-        )}
-      </div>
+      <span className="guest-muted">
+        {wifiStatusLabel(wifi.status)}
+      </span>
     )
   }
 
-  /*
-   * Mientras todavía estamos resolviendo el sitio,
-   * no intentamos cargar huéspedes/habitaciones.
-   */
   if (sitesLoading) {
     return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold">
-            Huéspedes
-          </h1>
-
-          <p className="text-sm text-gray-500">
-            Cargando sitios...
-          </p>
-        </div>
+      <div className="page">
+        <h1>Huéspedes</h1>
+        <p className="subtitle">
+          Cargando sitios...
+        </p>
       </div>
     )
   }
 
   if (sitesError) {
     return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold">
-            Huéspedes
-          </h1>
-
-          <p className="mt-2 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            {sitesError}
-          </p>
+      <div className="page">
+        <h1>Huéspedes</h1>
+        <div className="guest-alert guest-alert-error">
+          {sitesError}
         </div>
       </div>
     )
   }
 
-  /*
-   * No permitimos operar Guest Manager sin
-   * un sitio seleccionado.
-   */
   if (!selectedSiteId) {
     return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold">
-            Huéspedes
-          </h1>
-
-          <p className="mt-2 rounded-xl border bg-white p-6 text-sm text-gray-500">
-            No hay un sitio activo disponible
-            para administrar huéspedes.
-          </p>
+      <div className="page">
+        <h1>Huéspedes</h1>
+        <div className="guest-empty">
+          No hay un sitio activo disponible
+          para administrar huéspedes.
         </div>
       </div>
     )
@@ -1244,49 +1100,40 @@ if (
     actionId !== null
 
   return (
-    <div className="space-y-6">
-      {/* HEADER */}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+    <div className="page guest-page">
+      <div className="guest-header">
         <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
-            Guest Manager
+          <p className="eyebrow">
+            GUEST MANAGER
           </p>
 
-          <h1 className="text-2xl font-semibold">
-            Huéspedes
+          <h1>
+            Huéspedes y estancias
           </h1>
 
-          <p className="text-sm text-gray-500">
-            Gestión de huéspedes, reservas,
-            estancias y acceso WiFi.
+          <p className="subtitle">
+            Reservas, check-in, check-out
+            y acceso WiFi.
           </p>
         </div>
 
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          {/* SITE SELECTOR */}
+        <div className="guest-header-actions">
           {sites.filter(
             (site) => site.active,
           ).length > 1 && (
-            <div className="min-w-[260px]">
-              <label className="mb-1 block text-sm font-medium">
+            <div className="guest-field guest-site-field">
+              <label>
                 Sitio
               </label>
 
               <select
-                value={
-                  selectedSiteId
-                }
-                onChange={(
-                  event,
-                ) =>
+                value={selectedSiteId}
+                onChange={(event) =>
                   setSelectedSiteId(
                     event.target.value,
                   )
                 }
-                disabled={
-                  isGlobalBusy
-                }
-                className="w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 disabled:cursor-not-allowed disabled:bg-gray-100"
+                disabled={isGlobalBusy}
               >
                 {sites
                   .filter(
@@ -1296,18 +1143,10 @@ if (
                   .map(
                     (site) => (
                       <option
-                        key={
-                          site.id
-                        }
-                        value={
-                          site.id
-                        }
+                        key={site.id}
+                        value={site.id}
                       >
-                        {site.name} (
-                        {
-                          site.code
-                        }
-                        )
+                        {site.name} ({site.code})
                       </option>
                     ),
                   )}
@@ -1315,297 +1154,261 @@ if (
             </div>
           )}
 
-          {/* CURRENT SITE */}
-          {sites.filter(
-            (site) => site.active,
-          ).length === 1 &&
-            selectedSite && (
-              <div className="min-w-[220px]">
-                <label className="mb-1 block text-sm font-medium">
-                  Sitio
-                </label>
-
-                <div className="rounded-lg border bg-gray-50 px-3 py-2 text-sm">
-                  <div className="font-medium">
-                    {selectedSite.name}
-                  </div>
-
-                  <div className="text-xs text-gray-500">
-                    {selectedSite.code}
-                  </div>
-                </div>
-              </div>
-            )}
-
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                if (!selectedSiteId) {
-                  return
-                }
-
-                void Promise.all([
-                  loadGuests(
-                    selectedSiteId,
-                  ),
-                  loadRooms(
-                    selectedSiteId,
-                  ),
-                ])
-              }}
-              disabled={
-                isGlobalBusy
+          <button
+            type="button"
+            onClick={() => {
+              if (!selectedSiteId) {
+                return
               }
-              className="rounded-lg border px-4 py-2 text-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {loading
-                ? 'Actualizando...'
-                : 'Actualizar'}
-            </button>
 
-            <button
-              type="button"
-              onClick={
-                openReservationForm
-              }
-              disabled={
-                isGlobalBusy
-              }
-              className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Nueva reserva
-            </button>
-          </div>
+              void Promise.all([
+                loadGuests(
+                  selectedSiteId,
+                ),
+                loadRooms(
+                  selectedSiteId,
+                ),
+              ])
+            }}
+            disabled={isGlobalBusy}
+            className="guest-btn guest-btn-secondary"
+          >
+            {loading
+              ? 'Actualizando...'
+              : 'Actualizar'}
+          </button>
+
+          <button
+            type="button"
+            onClick={
+              openReservationForm
+            }
+            disabled={isGlobalBusy}
+            className="guest-btn guest-btn-primary"
+          >
+            + Nueva reserva
+          </button>
         </div>
       </div>
 
-      {/* CURRENT SITE INDICATOR */}
       {selectedSite && (
-        <div className="rounded-xl border bg-white px-4 py-3 text-sm">
-          <span className="text-gray-500">
-            Sitio actual:{' '}
-          </span>
+        <div className="guest-site-strip">
+          <div>
+            <span>Sitio actual</span>
+            <strong>
+              {selectedSite.name}
+            </strong>
+            <small>
+              {selectedSite.code}
+            </small>
+          </div>
 
-          <strong>
-            {selectedSite.name}
-          </strong>
+          <div className="guest-counters">
+            <div>
+              <strong>
+                {counters.checkedIn}
+              </strong>
+              <span>Hospedados</span>
+            </div>
 
-          <span className="ml-2 text-gray-400">
-            ({selectedSite.code})
-          </span>
+            <div>
+              <strong>
+                {counters.reserved}
+              </strong>
+              <span>Reservados</span>
+            </div>
+
+            <div>
+              <strong>
+                {counters.total}
+              </strong>
+              <span>Registros</span>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* CREATE RESERVATION FORM */}
       {showReservationForm && (
-        <div className="rounded-xl border bg-white p-6">
-          <div className="mb-5">
-            <h2 className="text-lg font-semibold">
-              Nueva reserva
-            </h2>
+        <div className="guest-reservation-card">
+          <div className="guest-reservation-head">
+            <div>
+              <h2>
+                Nueva reserva
+              </h2>
 
-            <p className="text-sm text-gray-500">
-              Registra al huésped y su estancia
-              en una sola operación.
-            </p>
+              <p>
+                Registra huésped, estancia
+                y acceso WiFi.
+              </p>
+            </div>
           </div>
 
           <form
             onSubmit={
               handleCreateReservation
             }
-            className="space-y-4"
+            className="guest-form"
           >
-            {/* GUEST DATA */}
-            <div>
-              <div className="mb-3 text-sm font-medium">
-                Datos del huésped
+            <section className="guest-form-section">
+              <div className="guest-section-title">
+                <span>1</span>
+                <div>
+                  <strong>
+                    Huésped
+                  </strong>
+                  <small>
+                    Datos de contacto.
+                  </small>
+                </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-3">
-                <div>
-                  <label className="mb-1 block text-sm font-medium">
+              <div className="guest-form-grid guest-form-grid-3">
+                <div className="guest-field">
+                  <label>
                     Nombre *
                   </label>
 
                   <input
                     type="text"
                     value={name}
-                    onChange={(
-                      event,
-                    ) =>
+                    onChange={(event) =>
                       setName(
-                        event.target
-                          .value,
+                        event.target.value,
                       )
                     }
                     placeholder="Nombre del huésped"
                     autoFocus
-                    className="w-full rounded-lg border px-3 py-2 outline-none focus:ring-2"
                   />
                 </div>
 
-                <div>
-                  <label className="mb-1 block text-sm font-medium">
+                <div className="guest-field">
+                  <label>
                     Email
                   </label>
 
                   <input
                     type="email"
                     value={email}
-                    onChange={(
-                      event,
-                    ) =>
+                    onChange={(event) =>
                       setEmail(
-                        event.target
-                          .value,
+                        event.target.value,
                       )
                     }
                     placeholder="correo@ejemplo.com"
-                    className="w-full rounded-lg border px-3 py-2 outline-none focus:ring-2"
                   />
                 </div>
 
-                <div>
-                  <label className="mb-1 block text-sm font-medium">
+                <div className="guest-field">
+                  <label>
                     Teléfono
                   </label>
 
                   <input
                     type="tel"
                     value={phone}
-                    onChange={(
-                      event,
-                    ) =>
+                    onChange={(event) =>
                       setPhone(
-                        event.target
-                          .value,
+                        event.target.value,
                       )
                     }
                     placeholder="222 000 0000"
-                    className="w-full rounded-lg border px-3 py-2 outline-none focus:ring-2"
                   />
                 </div>
               </div>
-            </div>
+            </section>
 
-            {/* STAY DATA */}
-            <div className="border-t pt-4">
-              <div className="mb-3 text-sm font-medium">
-                Datos de la estancia
+            <section className="guest-form-section">
+              <div className="guest-section-title">
+                <span>2</span>
+                <div>
+                  <strong>
+                    Estancia
+                  </strong>
+                  <small>
+                    Fechas y habitación.
+                  </small>
+                </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-3">
-                {/* ENTRY DATE */}
-                <div>
-                  <label className="mb-1 block text-sm font-medium">
+              <div className="guest-form-grid guest-form-grid-3">
+                <div className="guest-field">
+                  <label>
                     Entrada *
                   </label>
 
                   <input
                     type="date"
                     value={checkIn}
-                    onChange={(
-                      event,
-                    ) =>
+                    onChange={(event) =>
                       setCheckIn(
-                        event.target
-                          .value,
+                        event.target.value,
                       )
                     }
-                    className="w-full rounded-lg border px-3 py-2 outline-none focus:ring-2"
                   />
 
-                  <p className="mt-1 text-xs text-gray-500">
-                    Check-in del hotel:{' '}
-                    {
-                      HOTEL_CHECK_IN_TIME
-                    }
-                  </p>
+                  <small>
+                    Check-in {HOTEL_CHECK_IN_TIME}
+                  </small>
                 </div>
 
-                {/* EXIT DATE */}
-                <div>
-                  <label className="mb-1 block text-sm font-medium">
+                <div className="guest-field">
+                  <label>
                     Salida *
                   </label>
 
                   <input
                     type="date"
                     value={checkOut}
-                    onChange={(
-                      event,
-                    ) =>
+                    onChange={(event) =>
                       setCheckOut(
-                        event.target
-                          .value,
+                        event.target.value,
                       )
                     }
-                    className="w-full rounded-lg border px-3 py-2 outline-none focus:ring-2"
                   />
 
-                  <p className="mt-1 text-xs text-gray-500">
-                    Check-out del hotel:{' '}
-                    {
-                      HOTEL_CHECK_OUT_TIME
-                    }
-                  </p>
+                  <small>
+                    Check-out {HOTEL_CHECK_OUT_TIME}
+                  </small>
                 </div>
 
-                {/* ROOM */}
-                <div>
-                  <label className="mb-1 block text-sm font-medium">
+                <div className="guest-field">
+                  <label>
                     Habitación *
                   </label>
 
                   <select
                     value={roomId}
-                    onChange={(
-                      event,
-                    ) =>
+                    onChange={(event) =>
                       setRoomId(
-                        event.target
-                          .value,
+                        event.target.value,
                       )
                     }
                     disabled={
                       loadingRooms ||
                       !checkIn ||
                       !checkOut ||
-                      availableRooms.length ===
-                        0
+                      availableRooms.length === 0
                     }
-                    className="w-full rounded-lg border px-3 py-2 outline-none focus:ring-2 disabled:cursor-not-allowed disabled:bg-gray-100"
                   >
                     <option value="">
                       {loadingRooms
                         ? 'Cargando habitaciones...'
                         : !checkIn ||
                             !checkOut
-                          ? 'Primero selecciona las fechas'
-                          : availableRooms.length ===
-                              0
-                            ? 'No hay habitaciones disponibles'
+                          ? 'Selecciona primero las fechas'
+                          : availableRooms.length === 0
+                            ? 'Sin habitaciones disponibles'
                             : 'Seleccionar habitación'}
                     </option>
 
                     {availableRooms.map(
                       (room) => (
                         <option
-                          key={
-                            room.id
-                          }
-                          value={
-                            room.id
-                          }
+                          key={room.id}
+                          value={room.id}
                         >
-                          Hab.{' '}
-                          {
-                            room.number
-                          }
-                          {room.floor !==
-                          null
+                          Hab. {room.number}
+                          {room.floor !== null
                             ? ` — Piso ${room.floor}`
                             : ''}
                         </option>
@@ -1613,63 +1416,93 @@ if (
                     )}
                   </select>
 
-                  {!checkIn ||
-                  !checkOut ? (
-                    <p className="mt-1 text-xs text-gray-500">
-                      Selecciona primero la
-                      entrada y salida
-                      para consultar
-                      disponibilidad.
-                    </p>
-                  ) : availableRooms.length >
-                    0 ? (
-                    <p className="mt-1 text-xs text-gray-500">
-                      {
-                        availableRooms.length
-                      }{' '}
-                      {availableRooms.length ===
-                      1
-                        ? 'habitación disponible'
-                        : 'habitaciones disponibles'}{' '}
-                      para estas
-                      fechas.
-                    </p>
-                  ) : (
-                    <p className="mt-1 text-xs text-red-600">
-                      No hay habitaciones
-                      disponibles para
-                      el periodo
-                      seleccionado.
-                    </p>
-                  )}
+                  {checkIn &&
+                    checkOut && (
+                      <small
+                        className={
+                          availableRooms.length > 0
+                            ? ''
+                            : 'guest-field-error'
+                        }
+                      >
+                        {availableRooms.length > 0
+                          ? `${availableRooms.length} ${
+                              availableRooms.length === 1
+                                ? 'habitación disponible'
+                                : 'habitaciones disponibles'
+                            }`
+                          : 'No hay habitaciones disponibles para este periodo.'}
+                      </small>
+                    )}
                 </div>
               </div>
-            </div>
+            </section>
 
-            {/* NOTES */}
-            <div>
-              <label className="mb-1 block text-sm font-medium">
-                Notas
-              </label>
+            <section className="guest-form-section">
+              <div className="guest-section-title">
+                <span>3</span>
+                <div>
+                  <strong>
+                    WiFi y notas
+                  </strong>
+                  <small>
+                    Política de acceso de la estancia.
+                  </small>
+                </div>
+              </div>
 
-              <textarea
-                value={notes}
-                onChange={(
-                  event,
-                ) =>
-                  setNotes(
-                    event.target
-                      .value,
-                  )
-                }
-                placeholder="Notas de la estancia"
-                rows={3}
-                className="w-full rounded-lg border px-3 py-2 outline-none focus:ring-2"
-              />
-            </div>
+              <div className="guest-form-grid guest-form-grid-wifi">
+                <div className="guest-field">
+                  <label>
+                    Dispositivos permitidos
+                  </label>
 
-            {/* BUTTONS */}
-            <div className="flex justify-end gap-2 pt-2">
+                  <select
+                    value={wifiMaxDevices}
+                    onChange={(event) =>
+                      setWifiMaxDevices(
+                        Number(
+                          event.target.value,
+                        ),
+                      )
+                    }
+                  >
+                    {[1, 2, 3, 4, 5].map(
+                      (count) => (
+                        <option
+                          key={count}
+                          value={count}
+                        >
+                          {count}{' '}
+                          {count === 1
+                            ? 'dispositivo'
+                            : 'dispositivos'}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </div>
+
+                <div className="guest-field">
+                  <label>
+                    Notas
+                  </label>
+
+                  <textarea
+                    value={notes}
+                    onChange={(event) =>
+                      setNotes(
+                        event.target.value,
+                      )
+                    }
+                    rows={3}
+                    placeholder="Notas de la estancia"
+                  />
+                </div>
+              </div>
+            </section>
+
+            <div className="guest-form-actions">
               <button
                 type="button"
                 onClick={
@@ -1678,7 +1511,7 @@ if (
                 disabled={
                   creatingReservation
                 }
-                className="rounded-lg border px-4 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
+                className="guest-btn guest-btn-secondary"
               >
                 Cancelar
               </button>
@@ -1692,7 +1525,7 @@ if (
                   !checkOut ||
                   !roomId
                 }
-                className="rounded-lg bg-black px-4 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-50"
+                className="guest-btn guest-btn-primary"
               >
                 {creatingReservation
                   ? 'Guardando...'
@@ -1703,220 +1536,179 @@ if (
         </div>
       )}
 
-      {/* ERROR */}
       {error && (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <div className="guest-alert guest-alert-error">
           {error}
         </div>
       )}
 
-      {/* LOADING */}
       {loading && (
-        <div className="rounded-xl border bg-white p-6 text-sm text-gray-500">
+        <div className="guest-empty">
           Cargando huéspedes...
         </div>
       )}
 
-      {/* EMPTY */}
       {!loading &&
         !error &&
         guests.length === 0 && (
-          <div className="rounded-xl border bg-white p-8 text-center">
-            <div className="text-lg font-medium">
+          <div className="guest-empty">
+            <strong>
               No hay huéspedes
-            </div>
-
-            <p className="mt-1 text-sm text-gray-500">
+            </strong>
+            <span>
               Las reservas registradas
               aparecerán aquí.
-            </p>
+            </span>
           </div>
         )}
 
-      {/* TABLE */}
       {!loading &&
         guests.length > 0 && (
-          <div className="overflow-hidden rounded-xl border bg-white">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="border-b bg-gray-50 text-left">
+          <div className="guest-table-card">
+            <div className="guest-table-scroll">
+              <table className="guest-table">
+                <thead>
                   <tr>
-                    <th className="px-4 py-3 font-medium">
-                      Huésped
-                    </th>
-
-                    <th className="px-4 py-3 font-medium">
-                      Contacto
-                    </th>
-
-                    <th className="px-4 py-3 font-medium">
-                      Habitación
-                    </th>
-
-                    <th className="px-4 py-3 font-medium">
-                      Estancia
-                    </th>
-
-                    <th className="px-4 py-3 font-medium">
-                      WiFi
-                    </th>
-
-                    <th className="px-4 py-3 font-medium">
-                      Acciones
-                    </th>
+                    <th>Hab.</th>
+                    <th>Huésped</th>
+                    <th>Estado</th>
+                    <th>Entrada</th>
+                    <th>Salida</th>
+                    <th>WiFi</th>
+                    <th>Acciones</th>
                   </tr>
                 </thead>
 
-                <tbody className="divide-y">
-                  {guests.map(
+                <tbody>
+                  {visibleGuests.map(
                     (guest) => {
                       const stay =
                         currentStaysMap.get(
                           guest.id,
                         )
 
+                      if (!stay) {
+                        return (
+                          <tr key={guest.id}>
+                            <td className="guest-room-cell">
+                              —
+                            </td>
+
+                            <td>
+                              <div className="guest-name">
+                                {guest.name}
+                              </div>
+
+                              <div className="guest-secondary">
+                                Sin estancia
+                              </div>
+                            </td>
+
+                            <td colSpan={5}>
+                              <span className="guest-muted">
+                                Sin estancia disponible
+                              </span>
+                            </td>
+                          </tr>
+                        )
+                      }
+
                       return (
-                        <tr
-                          key={
-                            guest.id
-                          }
-                          className="hover:bg-gray-50"
-                        >
-                          {/* GUEST */}
-                          <td className="px-4 py-4">
-                            <div className="font-medium">
-                              {
-                                guest.name
-                              }
-                            </div>
+                        <tr key={guest.id}>
+                          <td className="guest-room-cell">
+                            <strong>
+                              {stay.room.number}
+                            </strong>
 
-                            <div className="text-xs text-gray-500">
-                              ID:{' '}
-                              {guest.id.slice(
-                                0,
-                                8,
-                              )}
-                            </div>
+                            {stay.room.floor !== null && (
+                              <small>
+                                Piso {stay.room.floor}
+                              </small>
+                            )}
                           </td>
 
-                          {/* CONTACT */}
-                          <td className="px-4 py-4">
-                            <div>
-                              {guest.email ||
-                                '—'}
+                          <td>
+                            <div className="guest-name">
+                              {guest.name}
                             </div>
 
-                            <div className="text-gray-500">
+                            <div className="guest-secondary">
                               {guest.phone ||
-                                '—'}
+                                guest.email ||
+                                `ID ${guest.id.slice(0, 8)}`}
                             </div>
-                          </td>
 
-                          {/* ROOM */}
-                          <td className="px-4 py-4">
-                            {stay ? (
-                              <>
-                                <div className="font-medium">
-                                  Hab.{' '}
-                                  {
-                                    stay
-                                      .room
-                                      .number
-                                  }
+                            {guest.phone &&
+                              guest.email && (
+                                <div className="guest-tertiary">
+                                  {guest.email}
                                 </div>
+                              )}
 
-                                <div className="text-xs text-gray-500">
-                                  Piso{' '}
-                                  {stay
-                                    .room
-                                    .floor ??
-                                    '—'}
-                                </div>
-                              </>
-                            ) : (
-                              '—'
+                            {stay.notes && (
+                              <div
+                                className="guest-note"
+                                title={stay.notes}
+                              >
+                                {stay.notes}
+                              </div>
                             )}
                           </td>
 
-                          {/* STAY */}
-                          <td className="px-4 py-4">
-                            {stay ? (
-                              <>
-                                <div>
-                                  {
-                                    stay.status
-                                  }
-                                </div>
+                          <td>
+                            <span
+                              className={`guest-status guest-status-${stay.status.toLowerCase()}`}
+                            >
+                              {stayStatusLabel(
+                                stay.status,
+                              )}
+                            </span>
 
-                                <div className="text-xs text-gray-500">
-                                  {formatDate(
-                                    stay.checkIn,
-                                  )}
-                                  {' → '}
-                                  {formatDate(
-                                    stay.checkOut,
-                                  )}
-                                </div>
-
-                                {stay.actualCheckIn && (
-                                  <div className="text-xs text-gray-500">
-                                    Entrada
-                                    real:{' '}
-                                    {formatDate(
-                                      stay.actualCheckIn,
-                                    )}
-                                  </div>
+                            {stay.actualCheckIn && (
+                              <div className="guest-tertiary">
+                                Real:{' '}
+                                {formatDate(
+                                  stay.actualCheckIn,
                                 )}
-
-                                {stay.actualCheckOut && (
-                                  <div className="text-xs text-gray-500">
-                                    Salida
-                                    real:{' '}
-                                    {formatDate(
-                                      stay.actualCheckOut,
-                                    )}
-                                  </div>
-                                )}
-
-                                {stay.notes && (
-                                  <div className="mt-1 text-xs text-gray-500">
-                                    Nota:{' '}
-                                    {
-                                      stay.notes
-                                    }
-                                  </div>
-                                )}
-                              </>
-                            ) : (
-                              'Sin estancia'
+                              </div>
                             )}
                           </td>
 
-                          {/* WIFI */}
-                          <td className="px-4 py-4">
-                            {stay ? (
-                              renderWifiActions(
-                                guest,
-                                stay,
-                              )
-                            ) : (
-                              <span className="text-gray-500">
-                                Sin estancia
-                              </span>
+                          <td className="guest-date-cell">
+                            <strong>
+                              {formatShortDate(
+                                stay.checkIn,
+                              )}
+                            </strong>
+
+                            <small>
+                              {HOTEL_CHECK_IN_TIME}
+                            </small>
+                          </td>
+
+                          <td className="guest-date-cell">
+                            <strong>
+                              {formatShortDate(
+                                stay.checkOut,
+                              )}
+                            </strong>
+
+                            <small>
+                              {HOTEL_CHECK_OUT_TIME}
+                            </small>
+                          </td>
+
+                          <td>
+                            {renderWifiActions(
+                              guest,
+                              stay,
                             )}
                           </td>
 
-                          {/* ACTIONS */}
-                          <td className="px-4 py-4">
-                            {stay ? (
-                              renderStayActions(
-                                guest,
-                                stay,
-                              )
-                            ) : (
-                              <span className="text-xs text-gray-500">
-                                Sin estancia
-                              </span>
+                          <td>
+                            {renderStayActions(
+                              guest,
+                              stay,
                             )}
                           </td>
                         </tr>
@@ -1928,6 +1720,125 @@ if (
             </div>
           </div>
         )}
+
+      {qrWifi?.wifi.accessUrl && (
+        <div
+          className="guest-qr-backdrop"
+          onClick={() =>
+            setQrWifi(null)
+          }
+        >
+          <div
+            className="guest-qr-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Acceso WiFi habitación ${qrWifi.roomNumber}`}
+            onClick={(event) =>
+              event.stopPropagation()
+            }
+          >
+            <div className="guest-qr-head">
+              <span>
+                ACCESO WIFI
+              </span>
+
+              <strong>
+                Habitación {qrWifi.roomNumber}
+              </strong>
+
+              <p>
+                {qrWifi.guestName}
+              </p>
+            </div>
+
+            <div className="guest-qr-body">
+              <div className="guest-qr-code">
+                <QRCodeSVG
+                  value={
+                    qrWifi.wifi.accessUrl
+                  }
+                  size={220}
+                  level="M"
+                />
+              </div>
+
+              <div className="guest-qr-info-grid">
+                <div>
+                  <span>
+                    Usuario
+                  </span>
+
+                  <strong>
+                    {qrWifi.wifi.username ||
+                      '—'}
+                  </strong>
+                </div>
+
+                <div>
+                  <span>
+                    Contraseña
+                  </span>
+
+                  <strong>
+                    {qrWifi.wifi.password ||
+                      '—'}
+                  </strong>
+                </div>
+
+                <div>
+                  <span>
+                    Dispositivos
+                  </span>
+
+                  <strong>
+                    Hasta {qrWifi.maxDevices}
+                  </strong>
+                </div>
+              </div>
+
+              <div className="guest-qr-expiry">
+                Expira{' '}
+                <strong>
+                  {formatDate(
+                    qrWifi.wifi.expiresAt,
+                  )}
+                </strong>
+              </div>
+
+              <p className="guest-qr-help">
+                Escanea el código para consultar
+                las credenciales de acceso.
+              </p>
+
+              <p className="guest-qr-timeout">
+                Se cerrará automáticamente en 60 segundos.
+              </p>
+
+              <div className="guest-qr-actions">
+                <button
+                  type="button"
+                  onClick={() =>
+                    window.print()
+                  }
+                  className="guest-btn guest-btn-secondary guest-qr-print"
+                >
+                  Imprimir acceso
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setQrWifi(null)
+                  }
+                  className="guest-btn guest-btn-primary guest-qr-close"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

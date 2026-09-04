@@ -15,6 +15,7 @@ type PublicWifiResponse = {
     username: string | null
     password: string | null
     expiresAt: string
+    maxDevices?: number
   }
 }
 
@@ -106,8 +107,8 @@ export default function GuestWifiPage() {
 
   if (loading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
-        <div className="text-sm text-gray-500">
+      <main className="guest-public-page">
+        <div className="guest-public-message">
           Cargando acceso WiFi...
         </div>
       </main>
@@ -116,13 +117,17 @@ export default function GuestWifiPage() {
 
   if (error || !data) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
-        <div className="w-full max-w-md rounded-2xl border bg-white p-8 text-center shadow-sm">
-          <div className="text-xl font-semibold">
-            Acceso no disponible
+      <main className="guest-public-page">
+        <div className="guest-public-card guest-public-error">
+          <div className="guest-public-brand">
+            TECNOCOM180
           </div>
 
-          <p className="mt-3 text-sm text-gray-500">
+          <h1>
+            Acceso no disponible
+          </h1>
+
+          <p>
             {error ??
               'No fue posible consultar este acceso.'}
           </p>
@@ -132,65 +137,77 @@ export default function GuestWifiPage() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-50 px-4 py-10">
-      <div className="mx-auto w-full max-w-md">
-        <div className="rounded-2xl border bg-white p-6 shadow-sm">
-          <div className="text-center">
-            <div className="text-xs font-medium uppercase tracking-widest text-gray-400">
-              TECNOCOM180
-            </div>
-
-            <h1 className="mt-2 text-2xl font-semibold">
-              Acceso WiFi
-            </h1>
-
-            <p className="mt-2 text-sm text-gray-500">
-              Bienvenido, {data.guest.name}
-            </p>
+    <main className="guest-public-page">
+      <div className="guest-public-card">
+        <div className="guest-public-head">
+          <div className="guest-public-brand">
+            TECNOCOM180
           </div>
 
-          <div className="mt-8 rounded-xl bg-gray-50 p-4">
-            <div className="text-xs uppercase tracking-wide text-gray-400">
-              Habitación
-            </div>
+          <h1>
+            Acceso WiFi
+          </h1>
 
-            <div className="mt-1 text-2xl font-semibold">
-              {data.room.number}
-            </div>
+          <p>
+            Bienvenido, {data.guest.name}
+          </p>
+        </div>
+
+        <div className="guest-public-room">
+          <span>
+            Habitación
+          </span>
+
+          <strong>
+            {data.room.number}
+          </strong>
+        </div>
+
+        <div className="guest-public-credentials">
+          <div>
+            <span>
+              Usuario
+            </span>
+
+            <strong>
+              {data.wifi.username ?? '—'}
+            </strong>
           </div>
 
-          <div className="mt-6 space-y-4">
+          <div>
+            <span>
+              Contraseña
+            </span>
+
+            <strong>
+              {data.wifi.password ?? '—'}
+            </strong>
+          </div>
+
+          {data.wifi.maxDevices !== undefined && (
             <div>
-              <div className="text-xs font-medium uppercase tracking-wide text-gray-400">
-                Usuario
-              </div>
+              <span>
+                Dispositivos permitidos
+              </span>
 
-              <div className="mt-1 rounded-xl border bg-white px-4 py-3 font-mono text-base">
-                {data.wifi.username ?? '—'}
-              </div>
-            </div>
-
-            <div>
-              <div className="text-xs font-medium uppercase tracking-wide text-gray-400">
-                Contraseña
-              </div>
-
-              <div className="mt-1 rounded-xl border bg-white px-4 py-3 font-mono text-base">
-                {data.wifi.password ?? '—'}
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-6 border-t pt-4">
-            <p className="text-center text-xs text-gray-500">
-              Este acceso vence el{' '}
               <strong>
-                {formatDate(
-                  data.wifi.expiresAt,
-                )}
+                Hasta {data.wifi.maxDevices}
               </strong>
-            </p>
-          </div>
+            </div>
+          )}
+        </div>
+
+        <div className="guest-public-expiry">
+          Este acceso vence el{' '}
+          <strong>
+            {formatDate(
+              data.wifi.expiresAt,
+            )}
+          </strong>
+        </div>
+
+        <div className="guest-public-footer">
+          TECNOCOM180 · Acceso para huéspedes
         </div>
       </div>
     </main>
