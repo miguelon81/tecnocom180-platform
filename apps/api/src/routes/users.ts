@@ -12,9 +12,22 @@ const usersRouter = Router();
 const validRoles = [
   "SUPER_ADMIN",
   "ORG_ADMIN",
+  "OPERATIONS",
   "RECEPTION",
   "TECHNICIAN",
 ] as const;
+
+type ValidRole = (typeof validRoles)[number];
+
+const siteScopedRoles: ValidRole[] = [
+  "RECEPTION",
+  "TECHNICIAN",
+];
+
+const globalRoles: ValidRole[] = [
+  "SUPER_ADMIN",
+  "OPERATIONS",
+];
 
 const userSelect = {
   id: true,
@@ -27,8 +40,64 @@ const userSelect = {
   lastLogin: true,
   createdAt: true,
   updatedAt: true,
-  organization: true,
+
+  organization: {
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+    },
+  },
+
+  sites: {
+    select: {
+      id: true,
+      siteId: true,
+      createdAt: true,
+      site: {
+        select: {
+          id: true,
+          organizationId: true,
+          name: true,
+          code: true,
+          active: true,
+        },
+      },
+    },
+    orderBy: {
+      createdAt: "asc" as const,
+    },
+  },
 };
+
+function isValidRole(role: unknown): role is ValidRole {
+  return (
+    typeof role === "string" &&
+    validRoles.includes(role as ValidRole)
+  );
+}
+
+function isSiteScopedRole(role: ValidRole) {
+  return siteScopedRoles.includes(role);
+}
+
+function isGlobalRole(role: ValidRole) {
+  return globalRoles.includes(role);
+}
+
+function getSiteIds(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return [
+    ...new Set(
+      value
+        .map((item) => String(item).trim())
+        .filter(Boolean),
+    ),
+  ];
+}
 
 function canAccessOrganization(
   req: AuthenticatedRequest,
@@ -45,11 +114,95 @@ function canAccessOrganization(
   return req.user.organizationId === organizationId;
 }
 
-function isValidRole(role: unknown): role is (typeof validRoles)[number] {
-  return (
-    typeof role === "string" &&
-    validRoles.includes(role as (typeof validRoles)[number])
+function canManageTargetRole(
+  actorRole: string,
+  targetRole: ValidRole,
+) {
+  if (actorRole === "SUPER_ADMIN") {
+    return true;
+  }
+
+  if (actorRole === "ORG_ADMIN") {
+    return (
+      targetRole === "ORG_ADMIN" ||
+      targetRole === "RECEPTION" ||
+      targetRole === "TECHNICIAN"
+    );
+  }
+
+  return false;
+}
+
+async function validateSitesForOrganization(
+  siteIds: string[],
+  organizationId: string,
+) {
+  if (siteIds.length === 0) {
+    return {
+      valid: true,
+      sites: [],
+    };
+  }
+
+  const sites = await prisma.site.findMany({
+    where: {
+      id: {
+        in: siteIds,
+      },
+    },
+    select: {
+      id: true,
+      organizationId: true,
+      active: true,
+    },
+  });
+
+  if (sites.length !== siteIds.length) {
+    return {
+      valid: false,
+      error: "One or more sites were not found",
+      sites: [],
+    };
+  }
+
+  const invalidOrganization = sites.some(
+    (site) => site.organizationId !== organizationId,
   );
+
+  if (invalidOrganization) {
+    return {
+      valid: false,
+      error: "All assigned sites must belong to the user's organization",
+      sites: [],
+    };
+  }
+
+  return {
+    valid: true,
+    sites,
+  };
+}
+
+async function syncUserSites(
+  userId: string,
+  siteIds: string[],
+) {
+  await prisma.$transaction(async (tx) => {
+    await tx.userSite.deleteMany({
+      where: {
+        userId,
+      },
+    });
+
+    if (siteIds.length > 0) {
+      await tx.userSite.createMany({
+        data: siteIds.map((siteId) => ({
+          userId,
+          siteId,
+        })),
+      });
+    }
+  });
 }
 
 // ============================================================
@@ -70,23 +223,46 @@ usersRouter.get(
 
       if (
         requestedOrganizationId &&
-        !canAccessOrganization(req, requestedOrganizationId)
+        !canAccessOrganization(
+          req,
+          requestedOrganizationId,
+        )
       ) {
         return res.status(403).json({
           error: "Access denied for this organization",
         });
       }
 
+      if (req.user!.role === "SUPER_ADMIN") {
+        const users = await prisma.user.findMany({
+          where: requestedOrganizationId
+            ? {
+                organizationId: requestedOrganizationId,
+              }
+            : undefined,
+          select: userSelect,
+          orderBy: {
+            name: "asc",
+          },
+        });
+
+        return res.json(users);
+      }
+
       const organizationId =
-        requestedOrganizationId ??
-        (req.user!.role === "SUPER_ADMIN"
-          ? undefined
-          : req.user!.organizationId);
+        req.user!.organizationId;
 
       const users = await prisma.user.findMany({
-        where: organizationId
-          ? { organizationId }
-          : undefined,
+        where: {
+          organizationId,
+          role: {
+            in: [
+              "ORG_ADMIN",
+              "RECEPTION",
+              "TECHNICIAN",
+            ],
+          },
+        },
         select: userSelect,
         orderBy: {
           name: "asc",
@@ -120,10 +296,7 @@ usersRouter.get(
         where: {
           id: userId,
         },
-        select: {
-          ...userSelect,
-          assignedTickets: true,
-        },
+        select: userSelect,
       });
 
       if (!user) {
@@ -132,9 +305,25 @@ usersRouter.get(
         });
       }
 
-      if (!canAccessOrganization(req, user.organizationId)) {
+      if (
+        !canAccessOrganization(
+          req,
+          user.organizationId,
+        )
+      ) {
         return res.status(403).json({
           error: "Access denied for this organization",
+        });
+      }
+
+      if (
+        !canManageTargetRole(
+          req.user!.role,
+          user.role,
+        )
+      ) {
+        return res.status(403).json({
+          error: "You cannot access this user",
         });
       }
 
@@ -160,16 +349,16 @@ usersRouter.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const {
-        organizationId,
+        organizationId: requestedOrganizationId,
         name,
         email,
         passwordHash,
         phone,
         role,
+        siteIds: rawSiteIds,
       } = req.body;
 
       if (
-        !organizationId ||
         !name ||
         !email ||
         !passwordHash ||
@@ -177,7 +366,7 @@ usersRouter.post(
       ) {
         return res.status(400).json({
           error:
-            "organizationId, name, email, passwordHash and role are required",
+            "name, email, passwordHash and role are required",
         });
       }
 
@@ -189,17 +378,83 @@ usersRouter.post(
       }
 
       if (
-        req.user!.role === "ORG_ADMIN" &&
-        role === "SUPER_ADMIN"
+        !canManageTargetRole(
+          req.user!.role,
+          role,
+        )
       ) {
         return res.status(403).json({
-          error: "ORG_ADMIN cannot create SUPER_ADMIN users",
+          error:
+            "You cannot create users with this role",
         });
       }
 
-      if (!canAccessOrganization(req, organizationId)) {
+      let organizationId: string;
+
+      if (req.user!.role === "SUPER_ADMIN") {
+        if (!requestedOrganizationId) {
+          return res.status(400).json({
+            error:
+              "organizationId is required for SUPER_ADMIN",
+          });
+        }
+
+        organizationId =
+          String(requestedOrganizationId);
+      } else {
+        organizationId =
+          req.user!.organizationId;
+      }
+
+      if (
+        !canAccessOrganization(
+          req,
+          organizationId,
+        )
+      ) {
         return res.status(403).json({
           error: "Access denied for this organization",
+        });
+      }
+
+      const organization =
+        await prisma.organization.findUnique({
+          where: {
+            id: organizationId,
+          },
+          select: {
+            id: true,
+            active: true,
+          },
+        });
+
+      if (!organization) {
+        return res.status(404).json({
+          error: "Organization not found",
+        });
+      }
+
+      const siteIds = getSiteIds(rawSiteIds);
+
+      if (
+        isSiteScopedRole(role) &&
+        siteIds.length === 0
+      ) {
+        return res.status(400).json({
+          error:
+            `${role} must be assigned to at least one site`,
+        });
+      }
+
+      const siteValidation =
+        await validateSitesForOrganization(
+          siteIds,
+          organizationId,
+        );
+
+      if (!siteValidation.valid) {
+        return res.status(400).json({
+          error: siteValidation.error,
         });
       }
 
@@ -207,24 +462,50 @@ usersRouter.post(
         .trim()
         .toLowerCase();
 
-      const password = String(passwordHash);
-
       const hashedPassword = await bcrypt.hash(
-        password,
+        String(passwordHash),
         10,
       );
 
-      const user = await prisma.user.create({
-        data: {
-          organizationId,
-          name: String(name).trim(),
-          email: normalizedEmail,
-          passwordHash: hashedPassword,
-          phone: phone ? String(phone).trim() : null,
-          role,
+      const user = await prisma.$transaction(
+        async (tx) => {
+          const createdUser =
+            await tx.user.create({
+              data: {
+                organizationId,
+                name: String(name).trim(),
+                email: normalizedEmail,
+                passwordHash: hashedPassword,
+                phone: phone
+                  ? String(phone).trim()
+                  : null,
+                role,
+              },
+              select: {
+                id: true,
+              },
+            });
+
+          if (
+            isSiteScopedRole(role) &&
+            siteIds.length > 0
+          ) {
+            await tx.userSite.createMany({
+              data: siteIds.map((siteId) => ({
+                userId: createdUser.id,
+                siteId,
+              })),
+            });
+          }
+
+          return tx.user.findUnique({
+            where: {
+              id: createdUser.id,
+            },
+            select: userSelect,
+          });
         },
-        select: userSelect,
-      });
+      );
 
       return res.status(201).json(user);
     } catch (error) {
@@ -237,7 +518,8 @@ usersRouter.post(
         error.code === "P2002"
       ) {
         return res.status(409).json({
-          error: "A user with this email already exists",
+          error:
+            "A user with this email already exists",
         });
       }
 
@@ -248,7 +530,8 @@ usersRouter.post(
         error.code === "P2003"
       ) {
         return res.status(409).json({
-          error: "Organization not found",
+          error:
+            "Organization or site not found",
         });
       }
 
@@ -278,19 +561,21 @@ usersRouter.patch(
         phone,
         role,
         active,
-        lastLogin,
+        organizationId: requestedOrganizationId,
+        siteIds: rawSiteIds,
       } = req.body;
 
-      const existingUser = await prisma.user.findUnique({
-        where: {
-          id: userId,
-        },
-        select: {
-          id: true,
-          organizationId: true,
-          role: true,
-        },
-      });
+      const existingUser =
+        await prisma.user.findUnique({
+          where: {
+            id: userId,
+          },
+          select: {
+            id: true,
+            organizationId: true,
+            role: true,
+          },
+        });
 
       if (!existingUser) {
         return res.status(404).json({
@@ -309,41 +594,120 @@ usersRouter.patch(
         });
       }
 
-      // ORG_ADMIN no puede modificar un SUPER_ADMIN.
       if (
-        req.user!.role === "ORG_ADMIN" &&
-        existingUser.role === "SUPER_ADMIN"
+        !canManageTargetRole(
+          req.user!.role,
+          existingUser.role,
+        )
       ) {
         return res.status(403).json({
-          error: "ORG_ADMIN cannot modify SUPER_ADMIN users",
+          error: "You cannot modify this user",
         });
       }
 
-      if (role !== undefined && !isValidRole(role)) {
+      let finalRole: ValidRole =
+        existingUser.role;
+
+      if (role !== undefined) {
+        if (!isValidRole(role)) {
+          return res.status(400).json({
+            error: "Invalid user role",
+            validRoles,
+          });
+        }
+
+        if (
+          !canManageTargetRole(
+            req.user!.role,
+            role,
+          )
+        ) {
+          return res.status(403).json({
+            error:
+              "You cannot assign this role",
+          });
+        }
+
+        finalRole = role;
+      }
+
+      let finalOrganizationId =
+        existingUser.organizationId;
+
+      if (
+        requestedOrganizationId !== undefined
+      ) {
+        if (
+          req.user!.role !== "SUPER_ADMIN"
+        ) {
+          return res.status(403).json({
+            error:
+              "Only SUPER_ADMIN can change organizationId",
+          });
+        }
+
+        finalOrganizationId = String(
+          requestedOrganizationId,
+        );
+
+        const organization =
+          await prisma.organization.findUnique({
+            where: {
+              id: finalOrganizationId,
+            },
+            select: {
+              id: true,
+            },
+          });
+
+        if (!organization) {
+          return res.status(404).json({
+            error: "Organization not found",
+          });
+        }
+      }
+
+      const siteIds =
+        rawSiteIds !== undefined
+          ? getSiteIds(rawSiteIds)
+          : undefined;
+
+      if (
+        isSiteScopedRole(finalRole) &&
+        siteIds !== undefined &&
+        siteIds.length === 0
+      ) {
         return res.status(400).json({
-          error: "Invalid user role",
-          validRoles,
+          error:
+            `${finalRole} must be assigned to at least one site`,
         });
       }
 
-      // ORG_ADMIN no puede asignar SUPER_ADMIN.
       if (
-        req.user!.role === "ORG_ADMIN" &&
-        role === "SUPER_ADMIN"
+        isSiteScopedRole(finalRole) &&
+        siteIds !== undefined
       ) {
-        return res.status(403).json({
-          error: "ORG_ADMIN cannot assign SUPER_ADMIN role",
-        });
+        const siteValidation =
+          await validateSitesForOrganization(
+            siteIds,
+            finalOrganizationId,
+          );
+
+        if (!siteValidation.valid) {
+          return res.status(400).json({
+            error: siteValidation.error,
+          });
+        }
       }
 
-      // Un ORG_ADMIN no puede convertir otro usuario
-      // en SUPER_ADMIN ni modificar uno que ya lo sea.
       if (
         req.user!.role === "ORG_ADMIN" &&
-        existingUser.role === "SUPER_ADMIN"
+        finalOrganizationId !==
+          req.user!.organizationId
       ) {
         return res.status(403).json({
-          error: "ORG_ADMIN cannot modify SUPER_ADMIN users",
+          error:
+            "ORG_ADMIN can only manage users in its organization",
         });
       }
 
@@ -354,7 +718,9 @@ usersRouter.patch(
       }
 
       if (email !== undefined) {
-        data.email = String(email).trim().toLowerCase();
+        data.email = String(email)
+          .trim()
+          .toLowerCase();
       }
 
       if (phone !== undefined) {
@@ -364,42 +730,76 @@ usersRouter.patch(
       }
 
       if (role !== undefined) {
-        data.role = role;
+        data.role = finalRole;
+      }
+
+      if (
+        requestedOrganizationId !== undefined
+      ) {
+        data.organizationId =
+          finalOrganizationId;
       }
 
       if (active !== undefined) {
         data.active = Boolean(active);
       }
 
-      if (lastLogin !== undefined) {
-        data.lastLogin = new Date(lastLogin);
-      }
-
-      // ========================================================
-      // CONTRASEÑA
-      // El frontend manda la contraseña nueva en passwordHash,
-      // pero aquí la convertimos a bcrypt antes de guardarla.
-      // ========================================================
-
       if (
         passwordHash !== undefined &&
         String(passwordHash).trim() !== ""
       ) {
-        data.passwordHash = await bcrypt.hash(
-          String(passwordHash),
-          10,
-        );
+        data.passwordHash =
+          await bcrypt.hash(
+            String(passwordHash),
+            10,
+          );
       }
 
-      const user = await prisma.user.update({
-        where: {
-          id: userId,
-        },
-        data,
-        select: userSelect,
-      });
+      await prisma.$transaction(
+        async (tx) => {
+          await tx.user.update({
+            where: {
+              id: userId,
+            },
+            data,
+          });
 
-      return res.json(user);
+          if (!isSiteScopedRole(finalRole)) {
+            await tx.userSite.deleteMany({
+              where: {
+                userId,
+              },
+            });
+
+            return;
+          }
+
+          if (siteIds !== undefined) {
+            await tx.userSite.deleteMany({
+              where: {
+                userId,
+              },
+            });
+
+            await tx.userSite.createMany({
+              data: siteIds.map((siteId) => ({
+                userId,
+                siteId,
+              })),
+            });
+          }
+        },
+      );
+
+      const updatedUser =
+        await prisma.user.findUnique({
+          where: {
+            id: userId,
+          },
+          select: userSelect,
+        });
+
+      return res.json(updatedUser);
     } catch (error) {
       console.error("Error updating user:", error);
 
@@ -410,7 +810,8 @@ usersRouter.patch(
         error.code === "P2002"
       ) {
         return res.status(409).json({
-          error: "A user with this email already exists",
+          error:
+            "A user with this email already exists",
         });
       }
 
@@ -445,20 +846,31 @@ usersRouter.delete(
     try {
       const userId = req.params.id as string;
 
-      const existingUser = await prisma.user.findUnique({
-        where: {
-          id: userId,
-        },
-        select: {
-          id: true,
-          organizationId: true,
-          role: true,
-        },
-      });
+      const existingUser =
+        await prisma.user.findUnique({
+          where: {
+            id: userId,
+          },
+          select: {
+            id: true,
+            organizationId: true,
+            role: true,
+          },
+        });
 
       if (!existingUser) {
         return res.status(404).json({
           error: "User not found",
+        });
+      }
+
+      if (
+        existingUser.id ===
+        req.user!.userId
+      ) {
+        return res.status(400).json({
+          error:
+            "You cannot deactivate your own user",
         });
       }
 
@@ -469,40 +881,40 @@ usersRouter.delete(
         )
       ) {
         return res.status(403).json({
-          error: "Access denied for this organization",
+          error:
+            "Access denied for this organization",
         });
       }
 
-      // Nunca permitir desactivar el propio usuario.
-      if (existingUser.id === req.user!.userId) {
-        return res.status(400).json({
-          error: "You cannot deactivate your own user",
-        });
-      }
-
-      // ORG_ADMIN no puede desactivar SUPER_ADMIN.
       if (
-        req.user!.role === "ORG_ADMIN" &&
-        existingUser.role === "SUPER_ADMIN"
+        !canManageTargetRole(
+          req.user!.role,
+          existingUser.role,
+        )
       ) {
         return res.status(403).json({
-          error: "ORG_ADMIN cannot deactivate SUPER_ADMIN users",
+          error:
+            "You cannot deactivate this user",
         });
       }
 
-      const user = await prisma.user.update({
-        where: {
-          id: userId,
-        },
-        data: {
-          active: false,
-        },
-        select: userSelect,
-      });
+      const user =
+        await prisma.user.update({
+          where: {
+            id: userId,
+          },
+          data: {
+            active: false,
+          },
+          select: userSelect,
+        });
 
       return res.json(user);
     } catch (error) {
-      console.error("Error deactivating user:", error);
+      console.error(
+        "Error deactivating user:",
+        error,
+      );
 
       if (
         typeof error === "object" &&

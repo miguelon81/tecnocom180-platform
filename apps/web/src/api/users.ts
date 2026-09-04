@@ -13,6 +13,19 @@ export type OrganizationSummary = {
   slug?: string
 }
 
+export type UserSiteAssignment = {
+  id: string
+  siteId: string
+  createdAt?: string
+  site: {
+    id: string
+    organizationId: string
+    name: string
+    code: string
+    active: boolean
+  }
+}
+
 export type User = {
   id: string
   organizationId: string
@@ -25,27 +38,33 @@ export type User = {
   createdAt?: string
   updatedAt?: string
   organization?: OrganizationSummary | null
+  sites: UserSiteAssignment[]
 }
 
 export type CreateUserInput = {
-  organizationId: string
+  organizationId?: string
   name: string
   email: string
   passwordHash: string
   phone?: string | null
   role: UserRole
+  siteIds?: string[]
 }
 
 export type UpdateUserInput = {
+  organizationId?: string
   name?: string
   email?: string
   passwordHash?: string
   phone?: string | null
   role?: UserRole
   active?: boolean
+  siteIds?: string[]
 }
 
-async function parseResponse<T>(response: Response): Promise<T> {
+async function parseResponse<T>(
+  response: Response,
+): Promise<T> {
   const text = await response.text()
 
   let data: unknown = null
@@ -98,7 +117,9 @@ export async function getUsers(
 // GET /users/:id
 // ============================================================
 
-export async function getUser(id: string): Promise<User> {
+export async function getUser(
+  id: string,
+): Promise<User> {
   const response = await apiFetch(`/users/${id}`)
 
   return parseResponse<User>(response)

@@ -19,6 +19,7 @@ import AreasPage from './pages/AreasPage'
 import OrganizationsPage from './pages/OrganizationsPage'
 import UsersPage from './pages/UsersPage'
 import GuestsPage from './pages/GuestsPage'
+import GuestWifiPage from './pages/GuestWifiPage'
 
 
 import './App.css'
@@ -227,6 +228,13 @@ function App() {
             />
           }
         />
+{/* =====================================================
+    PUBLIC GUEST WIFI
+===================================================== */}
+<Route
+  path="/guest-wifi/:token"
+  element={<GuestWifiPage />}
+/>
       </Routes>
     </BrowserRouter>
   )

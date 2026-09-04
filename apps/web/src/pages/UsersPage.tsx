@@ -1,33 +1,31 @@
-﻿import { useEffect, useState } from 'react'
+﻿import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
+
 import {
   createUser,
   deactivateUser,
   getUsers,
   updateUser,
 } from '../api/users'
+
 import type {
   CreateUserInput,
   UpdateUserInput,
   User,
   UserRole,
 } from '../api/users'
+
 import { useAuth } from '../auth/AuthContext'
+import { useSites } from '../sites/SiteContext'
 
 type UserForm = {
+  organizationId: string
   name: string
   email: string
   passwordHash: string
   phone: string
   role: UserRole
-}
-
-const emptyForm: UserForm = {
-  name: '',
-  email: '',
-  passwordHash: '',
-  phone: '',
-  role: 'TECHNICIAN',
+  siteIds: string[]
 }
 
 const roleLabels: Record<UserRole, string> = {
@@ -38,22 +36,86 @@ const roleLabels: Record<UserRole, string> = {
   TECHNICIAN: 'Técnico',
 }
 
+function isSiteScopedRole(role: UserRole) {
+  return (
+    role === 'RECEPTION' ||
+    role === 'TECHNICIAN'
+  )
+}
+
 function UsersPage() {
   const { user: currentUser } = useAuth()
 
+  const {
+    organizations,
+    selectedOrganizationId,
+    sites,
+  } = useSites()
+
   const [users, setUsers] = useState<User[]>([])
+
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
-  const [error, setError] = useState<string | null>(null)
-  const [formError, setFormError] = useState<string | null>(null)
+  const [error, setError] =
+    useState<string | null>(null)
 
-  const [showForm, setShowForm] = useState(false)
-  const [editingUser, setEditingUser] = useState<User | null>(null)
+  const [formError, setFormError] =
+    useState<string | null>(null)
 
-  const [form, setForm] = useState<UserForm>(emptyForm)
+  const [showForm, setShowForm] =
+    useState(false)
 
-  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
+  const [editingUser, setEditingUser] =
+    useState<User | null>(null)
+
+  const isSuperAdmin =
+    currentUser?.role === 'SUPER_ADMIN'
+
+  const defaultOrganizationId =
+    isSuperAdmin
+      ? selectedOrganizationId ?? ''
+      : currentUser?.organizationId ?? ''
+
+  const [form, setForm] =
+    useState<UserForm>({
+      organizationId: '',
+      name: '',
+      email: '',
+      passwordHash: '',
+      phone: '',
+      role: 'TECHNICIAN',
+      siteIds: [],
+    })
+
+  const availableRoles =
+    useMemo<UserRole[]>(() => {
+      if (isSuperAdmin) {
+        return [
+          'SUPER_ADMIN',
+          'OPERATIONS',
+          'ORG_ADMIN',
+          'RECEPTION',
+          'TECHNICIAN',
+        ]
+      }
+
+      return [
+        'ORG_ADMIN',
+        'RECEPTION',
+        'TECHNICIAN',
+      ]
+    }, [isSuperAdmin])
+
+  const availableSites = useMemo(
+    () =>
+      sites.filter(
+        (site) =>
+          site.organizationId ===
+          form.organizationId,
+      ),
+    [sites, form.organizationId],
+  )
 
   async function loadUsers() {
     try {
@@ -78,9 +140,21 @@ function UsersPage() {
     void loadUsers()
   }, [])
 
+  function createEmptyForm(): UserForm {
+    return {
+      organizationId: defaultOrganizationId,
+      name: '',
+      email: '',
+      passwordHash: '',
+      phone: '',
+      role: 'TECHNICIAN',
+      siteIds: [],
+    }
+  }
+
   function openCreateForm() {
     setEditingUser(null)
-    setForm(emptyForm)
+    setForm(createEmptyForm())
     setFormError(null)
     setShowForm(true)
   }
@@ -89,11 +163,17 @@ function UsersPage() {
     setEditingUser(user)
 
     setForm({
+      organizationId: user.organizationId,
       name: user.name,
       email: user.email,
       passwordHash: '',
       phone: user.phone ?? '',
       role: user.role,
+      siteIds:
+        user.sites?.map(
+          (assignment) =>
+            assignment.siteId,
+        ) ?? [],
     })
 
     setFormError(null)
@@ -107,12 +187,17 @@ function UsersPage() {
 
     setShowForm(false)
     setEditingUser(null)
-    setForm(emptyForm)
+    setForm(createEmptyForm())
     setFormError(null)
   }
 
   function handleChange(
-    field: keyof UserForm,
+    field:
+      | 'organizationId'
+      | 'name'
+      | 'email'
+      | 'passwordHash'
+      | 'phone',
     value: string,
   ) {
     setForm((current) => ({
@@ -121,29 +206,101 @@ function UsersPage() {
     }))
   }
 
+  function handleOrganizationChange(
+    organizationId: string,
+  ) {
+    setForm((current) => ({
+      ...current,
+      organizationId,
+      siteIds: [],
+    }))
+  }
+
+  function handleRoleChange(
+    role: UserRole,
+  ) {
+    setForm((current) => ({
+      ...current,
+      role,
+      siteIds: isSiteScopedRole(role)
+        ? current.siteIds
+        : [],
+    }))
+  }
+
+  function handleSiteToggle(
+    siteId: string,
+  ) {
+    setForm((current) => {
+      const exists =
+        current.siteIds.includes(siteId)
+
+      return {
+        ...current,
+        siteIds: exists
+          ? current.siteIds.filter(
+              (id) => id !== siteId,
+            )
+          : [...current.siteIds, siteId],
+      }
+    })
+  }
+
   async function handleSubmit(
     event: FormEvent<HTMLFormElement>,
   ) {
     event.preventDefault()
 
     if (!form.name.trim()) {
-      setFormError('El nombre es obligatorio')
+      setFormError(
+        'El nombre es obligatorio',
+      )
       return
     }
 
     if (!form.email.trim()) {
-      setFormError('El correo electrónico es obligatorio')
-      return
-    }
-
-    if (!editingUser && !form.passwordHash.trim()) {
-      setFormError('La contraseña temporal es obligatoria')
-      return
-    }
-
-    if (!isSuperAdmin && form.role === 'SUPER_ADMIN') {
       setFormError(
-        'Un Administrador de organización no puede crear ni asignar Super Admin',
+        'El correo electrónico es obligatorio',
+      )
+      return
+    }
+
+    if (
+      !editingUser &&
+      !form.passwordHash.trim()
+    ) {
+      setFormError(
+        'La contraseña temporal es obligatoria',
+      )
+      return
+    }
+
+    if (!form.organizationId) {
+      setFormError(
+        'La organización es obligatoria',
+      )
+      return
+    }
+
+    if (
+      isSiteScopedRole(form.role) &&
+      form.siteIds.length === 0
+    ) {
+      setFormError(
+        'Selecciona al menos un sitio para este usuario',
+      )
+      return
+    }
+
+    if (
+      !isSuperAdmin &&
+      (
+        form.role === 'SUPER_ADMIN' ||
+        form.role === 'OPERATIONS'
+      )
+    ) {
+      setFormError(
+        'No tienes permiso para asignar este rol',
       )
       return
     }
@@ -156,23 +313,33 @@ function UsersPage() {
         const data: UpdateUserInput = {
           name: form.name.trim(),
           email: form.email.trim(),
-          phone: form.phone.trim() || null,
-        }
-
-        if (form.passwordHash.trim()) {
-          data.passwordHash = form.passwordHash.trim()
+          phone:
+            form.phone.trim() || null,
+          role: form.role,
+          siteIds: isSiteScopedRole(
+            form.role,
+          )
+            ? form.siteIds
+            : [],
         }
 
         if (isSuperAdmin) {
-          data.role = form.role
-        } else if (editingUser.role !== 'SUPER_ADMIN') {
-          data.role = form.role
+          data.organizationId =
+            form.organizationId
         }
 
-        const updatedUser = await updateUser(
-          editingUser.id,
-          data,
-        )
+        if (
+          form.passwordHash.trim()
+        ) {
+          data.passwordHash =
+            form.passwordHash.trim()
+        }
+
+        const updatedUser =
+          await updateUser(
+            editingUser.id,
+            data,
+          )
 
         setUsers((current) =>
           current.map((item) =>
@@ -182,35 +349,40 @@ function UsersPage() {
           ),
         )
       } else {
-        const organizationId =
-          currentUser?.organizationId
-
-        if (!organizationId) {
-          setFormError(
-            'No se encontró la organización del usuario actual',
-          )
-          return
-        }
-
         const data: CreateUserInput = {
-          organizationId,
           name: form.name.trim(),
           email: form.email.trim(),
-          passwordHash: form.passwordHash.trim(),
-          phone: form.phone.trim() || null,
+          passwordHash:
+            form.passwordHash.trim(),
+          phone:
+            form.phone.trim() || null,
           role: form.role,
+          siteIds: isSiteScopedRole(
+            form.role,
+          )
+            ? form.siteIds
+            : [],
         }
 
-        const createdUser = await createUser(data)
+        if (isSuperAdmin) {
+          data.organizationId =
+            form.organizationId
+        }
+
+        const createdUser =
+          await createUser(data)
 
         setUsers((current) =>
-          [...current, createdUser].sort((a, b) =>
-            a.name.localeCompare(b.name),
+          [...current, createdUser].sort(
+            (a, b) =>
+              a.name.localeCompare(b.name),
           ),
         )
       }
 
-      closeForm()
+      setShowForm(false)
+      setEditingUser(null)
+      setForm(createEmptyForm())
     } catch (err) {
       setFormError(
         err instanceof Error
@@ -222,9 +394,13 @@ function UsersPage() {
     }
   }
 
-  async function handleToggleActive(user: User) {
+  async function handleToggleActive(
+    user: User,
+  ) {
     if (user.id === currentUser?.id) {
-      setError('No puedes desactivar tu propio usuario')
+      setError(
+        'No puedes desactivar tu propio usuario',
+      )
       return
     }
 
@@ -232,20 +408,24 @@ function UsersPage() {
       setError(null)
 
       if (user.active) {
-        await deactivateUser(user.id)
+        const updatedUser =
+          await deactivateUser(user.id)
 
         setUsers((current) =>
           current.map((item) =>
-            item.id === user.id
-              ? { ...item, active: false }
+            item.id === updatedUser.id
+              ? updatedUser
               : item,
           ),
         )
       } else {
-        const updatedUser = await updateUser(
-          user.id,
-          { active: true },
-        )
+        const updatedUser =
+          await updateUser(
+            user.id,
+            {
+              active: true,
+            },
+          )
 
         setUsers((current) =>
           current.map((item) =>
@@ -283,8 +463,8 @@ function UsersPage() {
           <h1>Usuarios</h1>
 
           <p className="subtitle">
-            Administración de usuarios y permisos de la
-            organización.
+            Administración de usuarios,
+            roles y alcance por sitio.
           </p>
         </div>
 
@@ -317,7 +497,8 @@ function UsersPage() {
             marginBottom: '20px',
             padding: '12px 16px',
             borderRadius: '8px',
-            border: '1px solid #dc2626',
+            border:
+              '1px solid #dc2626',
           }}
         >
           {error}
@@ -330,7 +511,8 @@ function UsersPage() {
             marginBottom: '24px',
             padding: '24px',
             borderRadius: '12px',
-            border: '1px solid #d1d5db',
+            border:
+              '1px solid #d1d5db',
           }}
         >
           <div className="page-header">
@@ -355,7 +537,8 @@ function UsersPage() {
                 marginBottom: '16px',
                 padding: '10px 14px',
                 borderRadius: '8px',
-                border: '1px solid #dc2626',
+                border:
+                  '1px solid #dc2626',
               }}
             >
               {formError}
@@ -371,8 +554,52 @@ function UsersPage() {
                 gap: '16px',
               }}
             >
+              {isSuperAdmin && (
+                <label>
+                  Organización
+
+                  <select
+                    value={
+                      form.organizationId
+                    }
+                    onChange={(event) =>
+                      handleOrganizationChange(
+                        event.target.value,
+                      )
+                    }
+                  >
+                    <option value="">
+                      Selecciona una organización
+                    </option>
+
+                    {organizations
+                      .filter(
+                        (organization) =>
+                          organization.active,
+                      )
+                      .map(
+                        (organization) => (
+                          <option
+                            key={
+                              organization.id
+                            }
+                            value={
+                              organization.id
+                            }
+                          >
+                            {
+                              organization.name
+                            }
+                          </option>
+                        ),
+                      )}
+                  </select>
+                </label>
+              )}
+
               <label>
                 Nombre
+
                 <input
                   type="text"
                   value={form.name}
@@ -388,6 +615,7 @@ function UsersPage() {
 
               <label>
                 Correo electrónico
+
                 <input
                   type="email"
                   value={form.email}
@@ -403,6 +631,7 @@ function UsersPage() {
 
               <label>
                 Teléfono
+
                 <input
                   type="text"
                   value={form.phone}
@@ -418,36 +647,26 @@ function UsersPage() {
 
               <label>
                 Rol
+
                 <select
                   value={form.role}
                   onChange={(event) =>
-                    handleChange(
-                      'role',
-                      event.target.value,
+                    handleRoleChange(
+                      event.target
+                        .value as UserRole,
                     )
                   }
                 >
-                  {isSuperAdmin && (
-                    <option value="SUPER_ADMIN">
-                      Super Admin
-                    </option>
+                  {availableRoles.map(
+                    (role) => (
+                      <option
+                        key={role}
+                        value={role}
+                      >
+                        {roleLabels[role]}
+                      </option>
+                    ),
                   )}
-
-                  <option value="ORG_ADMIN">
-                    Administrador
-                  </option>
-
-                  <option value="OPERATIONS">
-                    Operaciones
-                  </option>
-
-                  <option value="RECEPTION">
-                    Recepción
-                  </option>
-
-                  <option value="TECHNICIAN">
-                    Técnico
-                  </option>
                 </select>
               </label>
 
@@ -458,7 +677,9 @@ function UsersPage() {
 
                 <input
                   type="password"
-                  value={form.passwordHash}
+                  value={
+                    form.passwordHash
+                  }
                   onChange={(event) =>
                     handleChange(
                       'passwordHash',
@@ -469,6 +690,79 @@ function UsersPage() {
                 />
               </label>
             </div>
+
+            {isSiteScopedRole(
+              form.role,
+            ) && (
+              <div
+                style={{
+                  marginTop: '20px',
+                }}
+              >
+                <strong>
+                  Sitios asignados
+                </strong>
+
+                <p
+                  style={{
+                    margin:
+                      '6px 0 12px',
+                    opacity: 0.7,
+                  }}
+                >
+                  Selecciona los sitios a
+                  los que tendrá acceso este
+                  usuario.
+                </p>
+
+                {availableSites.length ===
+                0 ? (
+                  <p>
+                    No hay sitios disponibles
+                    para esta organización.
+                  </p>
+                ) : (
+                  <div
+                    style={{
+                      display: 'grid',
+                      gap: '10px',
+                    }}
+                  >
+                    {availableSites.map(
+                      (site) => (
+                        <label
+                          key={site.id}
+                          style={{
+                            display:
+                              'flex',
+                            alignItems:
+                              'center',
+                            gap: '10px',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={form.siteIds.includes(
+                              site.id,
+                            )}
+                            onChange={() =>
+                              handleSiteToggle(
+                                site.id,
+                              )
+                            }
+                          />
+
+                          <span>
+                            {site.name}{' '}
+                            ({site.code})
+                          </span>
+                        </label>
+                      ),
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div
               style={{
@@ -512,15 +806,18 @@ function UsersPage() {
             style={{
               padding: '20px',
               borderRadius: '12px',
-              border: '1px solid #d1d5db',
+              border:
+                '1px solid #d1d5db',
             }}
           >
             <div
               style={{
                 display: 'flex',
-                justifyContent: 'space-between',
+                justifyContent:
+                  'space-between',
                 gap: '20px',
-                alignItems: 'flex-start',
+                alignItems:
+                  'flex-start',
               }}
             >
               <div>
@@ -534,12 +831,20 @@ function UsersPage() {
                   {item.name}
                 </p>
 
-                <p style={{ margin: '6px 0' }}>
+                <p
+                  style={{
+                    margin: '6px 0',
+                  }}
+                >
                   {item.email}
                 </p>
 
                 {item.phone && (
-                  <p style={{ margin: '6px 0' }}>
+                  <p
+                    style={{
+                      margin: '6px 0',
+                    }}
+                  >
                     {item.phone}
                   </p>
                 )}
@@ -560,61 +865,83 @@ function UsersPage() {
 
             <div
               style={{
+                marginTop: '14px',
+              }}
+            >
+              <strong>
+                {roleLabels[item.role]}
+              </strong>
+
+              {item.organization && (
+                <span
+                  style={{
+                    marginLeft: '12px',
+                    opacity: 0.7,
+                  }}
+                >
+                  {
+                    item.organization
+                      .name
+                  }
+                </span>
+              )}
+
+              {item.sites?.length >
+                0 && (
+                <div
+                  style={{
+                    marginTop: '8px',
+                    opacity: 0.8,
+                  }}
+                >
+                  Sitios:{' '}
+                  {item.sites
+                    .map(
+                      (assignment) =>
+                        assignment.site
+                          .name,
+                    )
+                    .join(', ')}
+                </div>
+              )}
+            </div>
+
+            <div
+              style={{
                 display: 'flex',
-                justifyContent: 'space-between',
+                justifyContent:
+                  'flex-end',
                 alignItems: 'center',
                 marginTop: '18px',
-                gap: '12px',
+                gap: '8px',
                 flexWrap: 'wrap',
               }}
             >
-              <div>
-                <strong>
-                  {roleLabels[item.role]}
-                </strong>
-
-                {item.organization && (
-                  <span
-                    style={{
-                      marginLeft: '12px',
-                      opacity: 0.7,
-                    }}
-                  >
-                    {item.organization.name}
-                  </span>
-                )}
-              </div>
-
-              <div
-                style={{
-                  display: 'flex',
-                  gap: '8px',
-                  flexWrap: 'wrap',
-                }}
+              <button
+                type="button"
+                onClick={() =>
+                  openEditForm(item)
+                }
               >
-                <button
-                  type="button"
-                  onClick={() =>
-                    openEditForm(item)
-                  }
-                >
-                  Editar
-                </button>
+                Editar
+              </button>
 
-                <button
-                  type="button"
-                  disabled={
-                    item.id === currentUser?.id
-                  }
-                  onClick={() =>
-                    handleToggleActive(item)
-                  }
-                >
-                  {item.active
-                    ? 'Desactivar'
-                    : 'Activar'}
-                </button>
-              </div>
+              <button
+                type="button"
+                disabled={
+                  item.id ===
+                  currentUser?.id
+                }
+                onClick={() =>
+                  handleToggleActive(
+                    item,
+                  )
+                }
+              >
+                {item.active
+                  ? 'Desactivar'
+                  : 'Activar'}
+              </button>
             </div>
           </article>
         ))}
@@ -622,7 +949,9 @@ function UsersPage() {
 
       {users.length === 0 && (
         <section>
-          <p>No hay usuarios registrados.</p>
+          <p>
+            No hay usuarios registrados.
+          </p>
 
           {!showForm && (
             <button

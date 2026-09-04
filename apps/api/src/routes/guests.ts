@@ -1383,4 +1383,75 @@ guestsRouter.post(
   },
 );
 
+// ============================================================
+// GET /guests/wifi/public/:token
+// Public guest WiFi access
+// ============================================================
+
+guestsRouter.get(
+  "/wifi/public/:token",
+  async (req, res) => {
+    try {
+      const token =
+        req.params.token as string;
+
+      const wifiAccess =
+        await prisma.guestWifiAccess.findUnique({
+          where: {
+            token,
+          },
+          include: {
+            stay: {
+              include: {
+                guest: true,
+                room: true,
+              },
+            },
+          },
+        });
+
+      if (!wifiAccess) {
+        return res.status(404).json({
+          error: "WiFi access not found",
+        });
+      }
+
+      const now = new Date();
+
+      if (
+        wifiAccess.status !== "ACTIVE" ||
+        wifiAccess.expiresAt <= now ||
+        wifiAccess.stay.status !== "CHECKED_IN"
+      ) {
+        return res.status(410).json({
+          error: "WiFi access is no longer available",
+        });
+      }
+
+      return res.json({
+        guest: {
+          name: wifiAccess.stay.guest.name,
+        },
+        room: {
+          number: wifiAccess.stay.room.number,
+        },
+        wifi: {
+          username: wifiAccess.username,
+          password: wifiAccess.password,
+          expiresAt: wifiAccess.expiresAt,
+        },
+      });
+    } catch (error) {
+      console.error(
+        "Error fetching public guest WiFi access:",
+        error,
+      );
+
+      return res.status(500).json({
+        error: "Failed to fetch WiFi access",
+      });
+    }
+  },
+);
+
 export { guestsRouter };

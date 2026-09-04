@@ -18,6 +18,7 @@ import { getOrganizations } from '../api/organizations'
 import type { Organization, Site } from '../types/site'
 
 import { useAuth } from '../auth/AuthContext'
+import { useSites } from '../sites/SiteContext'
 
 type SiteForm = {
   organizationId: string
@@ -43,6 +44,7 @@ const EMPTY_FORM: SiteForm = {
 
 export default function SitesPage() {
   const { user: currentUser } = useAuth()
+  const { refreshSites } = useSites()
 
   const [sites, setSites] = useState<Site[]>([])
   const [organizations, setOrganizations] = useState<Organization[]>([])
@@ -308,6 +310,7 @@ country: form.country.trim() || undefined,
       }
 
       resetForm()
+await refreshSites()
 
       await loadSites()
     } catch (err) {
@@ -343,6 +346,7 @@ country: form.country.trim() || undefined,
       })
 
       await loadSites()
+await refreshSites()
     } catch (err) {
       setError(
         err instanceof Error
@@ -382,6 +386,7 @@ country: form.country.trim() || undefined,
       await deleteSite(site.id)
 
       await loadSites()
+await refreshSites()
     } catch (err) {
       setError(
         err instanceof Error

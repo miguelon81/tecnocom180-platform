@@ -68,13 +68,33 @@ export function SiteProvider({
   const [organizations, setOrganizations] =
     useState<Organization[]>([])
 
+  /*
+   * Todos los sitios a los que el usuario
+   * tiene acceso.
+   *
+   * SUPER_ADMIN:
+   *   todos los sitios.
+   *
+   * Otros roles:
+   *   solamente los sitios de su organización.
+   */
+  const [allSites, setAllSites] =
+    useState<Site[]>([])
+
+  /*
+   * Sitios correspondientes a la organización
+   * actualmente seleccionada.
+   *
+   * Este es el arreglo que exponemos mediante
+   * useSites().
+   */
+  const [sites, setSites] =
+    useState<Site[]>([])
+
   const [
     selectedOrganizationId,
     setSelectedOrganizationIdState,
   ] = useState<string | null>(null)
-
-  const [sites, setSites] =
-    useState<Site[]>([])
 
   const [
     selectedSiteId,
@@ -93,18 +113,14 @@ export function SiteProvider({
   const userOrganizationId =
     user?.organizationId ?? null
 
-  /*
-   * Carga organizaciones y sitios.
-   *
-   * SUPER_ADMIN:
-   *   puede ver todas las organizaciones.
-   *
-   * Los demás usuarios:
-   *   solamente trabajan con su organización.
-   */
+  // ============================================================
+  // REFRESH
+  // ============================================================
+
   async function refreshSites() {
     if (!user) {
       setOrganizations([])
+      setAllSites([])
       setSites([])
       setSelectedOrganizationIdState(null)
       setSelectedSiteIdState(null)
@@ -115,11 +131,6 @@ export function SiteProvider({
       setLoading(true)
       setError(null)
 
-      /*
-       * CARGAR SITIOS
-       *
-       * El backend ya aplica el aislamiento.
-       */
       const siteData = await getSites()
 
       let availableOrganizations: Organization[] = []
@@ -127,21 +138,21 @@ export function SiteProvider({
 
       if (isSuperAdmin) {
         /*
-         * SUPER_ADMIN necesita conocer todas las
-         * organizaciones para poder seleccionar una.
+         * SUPER_ADMIN:
+         *
+         * - todas las organizaciones
+         * - todos los sitios
          */
         availableOrganizations =
           await getOrganizations()
 
-        /*
-         * El endpoint /sites para SUPER_ADMIN devuelve
-         * todos los sitios.
-         */
         availableSites = siteData
       } else {
         /*
-         * Para usuarios normales solamente usamos
-         * su organización.
+         * Usuarios de organización:
+         *
+         * solamente conservamos los sitios
+         * pertenecientes a su organización.
          */
         availableSites = siteData.filter(
           (site) =>
@@ -150,12 +161,8 @@ export function SiteProvider({
         )
 
         /*
-         * Construimos la organización actual
-         * a partir de los sitios si está disponible.
-         *
-         * Si no tiene sitios, todavía mantenemos
-         * la organización mediante el organizationId
-         * del usuario.
+         * Obtenemos la organización desde alguno
+         * de los sitios disponibles.
          */
         const organizationFromSite =
           availableSites.find(
@@ -175,9 +182,14 @@ export function SiteProvider({
         availableOrganizations,
       )
 
-      /*
-       * Determinar organización seleccionada.
-       */
+      setAllSites(
+        availableSites,
+      )
+
+      // ========================================================
+      // ORGANIZACIÓN SELECCIONADA
+      // ========================================================
+
       let organizationToUse: string | null =
         null
 
@@ -193,15 +205,20 @@ export function SiteProvider({
           )
 
         const storedOrganizationIsValid =
-          storedOrganizationId &&
-          availableOrganizations.some(
-            (organization) =>
-              organization.id ===
-              storedOrganizationId &&
-              organization.active,
+          Boolean(
+            storedOrganizationId &&
+              availableOrganizations.some(
+                (organization) =>
+                  organization.id ===
+                    storedOrganizationId &&
+                  organization.active,
+              ),
           )
 
-        if (storedOrganizationIsValid) {
+        if (
+          storedOrganizationIsValid &&
+          storedOrganizationId
+        ) {
           organizationToUse =
             storedOrganizationId
         } else {
@@ -235,10 +252,10 @@ export function SiteProvider({
         organizationToUse,
       )
 
-      /*
-       * Ahora filtramos los sitios según
-       * la organización seleccionada.
-       */
+      // ========================================================
+      // SITIOS DE LA ORGANIZACIÓN
+      // ========================================================
+
       const organizationSites =
         organizationToUse
           ? availableSites.filter(
@@ -250,68 +267,71 @@ export function SiteProvider({
 
       setSites(organizationSites)
 
-      /*
-       * Recuperar el sitio seleccionado para
-       * esta organización.
-       */
-      if (
-        organizationToUse
-      ) {
-        const siteStorageKey =
-          getSiteStorageKey(
-            user.id,
-            organizationToUse,
-          )
+      // ========================================================
+      // SITIO SELECCIONADO
+      // ========================================================
 
-        const storedSiteId =
-          localStorage.getItem(
-            siteStorageKey,
-          )
+      if (!organizationToUse) {
+        setSelectedSiteIdState(null)
+        return
+      }
 
-        const storedSiteIsValid =
+      const siteStorageKey =
+        getSiteStorageKey(
+          user.id,
+          organizationToUse,
+        )
+
+      const storedSiteId =
+        localStorage.getItem(
+          siteStorageKey,
+        )
+
+      const storedSiteIsValid =
+        Boolean(
           storedSiteId &&
-          organizationSites.some(
-            (site) =>
-              site.id ===
-                storedSiteId &&
-              site.active,
-          )
-
-        if (storedSiteIsValid) {
-          setSelectedSiteIdState(
-            storedSiteId,
-          )
-        } else {
-          const firstActiveSite =
-            organizationSites.find(
+            organizationSites.some(
               (site) =>
+                site.id === storedSiteId &&
                 site.active,
-            )
+            ),
+        )
 
-          if (firstActiveSite) {
-            setSelectedSiteIdState(
-              firstActiveSite.id,
-            )
+      if (
+        storedSiteIsValid &&
+        storedSiteId
+      ) {
+        setSelectedSiteIdState(
+          storedSiteId,
+        )
 
-            localStorage.setItem(
-              siteStorageKey,
-              firstActiveSite.id,
-            )
-          } else {
-            setSelectedSiteIdState(
-              null,
-            )
+        return
+      }
 
-            localStorage.removeItem(
-              siteStorageKey,
-            )
-          }
-        }
+      const firstActiveSite =
+        organizationSites.find(
+          (site) => site.active,
+        )
+
+      if (firstActiveSite) {
+        setSelectedSiteIdState(
+          firstActiveSite.id,
+        )
+
+        localStorage.setItem(
+          siteStorageKey,
+          firstActiveSite.id,
+        )
       } else {
         setSelectedSiteIdState(null)
+
+        localStorage.removeItem(
+          siteStorageKey,
+        )
       }
     } catch (err) {
       setOrganizations([])
+      setAllSites([])
       setSites([])
       setSelectedOrganizationIdState(null)
       setSelectedSiteIdState(null)
@@ -326,15 +346,10 @@ export function SiteProvider({
     }
   }
 
-  /*
-   * Cuando cambia el usuario:
-   *
-   * - login
-   * - logout
-   * - cambio de usuario
-   *
-   * reconstruimos completamente el contexto.
-   */
+  // ============================================================
+  // USUARIO
+  // ============================================================
+
   useEffect(() => {
     void refreshSites()
   }, [
@@ -343,11 +358,10 @@ export function SiteProvider({
     user?.role,
   ])
 
-  /*
-   * Selección de organización.
-   *
-   * Solamente SUPER_ADMIN puede cambiarla.
-   */
+  // ============================================================
+  // CAMBIAR ORGANIZACIÓN
+  // ============================================================
+
   function setSelectedOrganizationId(
     organizationId: string,
   ) {
@@ -355,6 +369,10 @@ export function SiteProvider({
       return
     }
 
+    /*
+     * Solamente SUPER_ADMIN puede cambiar
+     * manualmente de organización.
+     */
     if (!isSuperAdmin) {
       return
     }
@@ -370,8 +388,26 @@ export function SiteProvider({
       return
     }
 
+    /*
+     * Ahora filtramos desde allSites,
+     * NO desde sites.
+     *
+     * allSites conserva todos los sitios
+     * accesibles por SUPER_ADMIN.
+     */
+    const organizationSites =
+      allSites.filter(
+        (site) =>
+          site.organizationId ===
+          organizationId,
+      )
+
     setSelectedOrganizationIdState(
       organizationId,
+    )
+
+    setSites(
+      organizationSites,
     )
 
     localStorage.setItem(
@@ -381,63 +417,74 @@ export function SiteProvider({
       organizationId,
     )
 
-    /*
-     * Al cambiar organización, el sitio anterior
-     * deja de ser válido.
-     *
-     * Seleccionamos automáticamente el primer
-     * sitio activo de la nueva organización.
-     */
-    const organizationSites =
-      sites.filter(
-        (site) =>
-          site.organizationId ===
-          organizationId,
+    // ========================================================
+    // RECUPERAR SITIO ANTERIOR DE ESTA ORGANIZACIÓN
+    // ========================================================
+
+    const siteStorageKey =
+      getSiteStorageKey(
+        user.id,
+        organizationId,
       )
 
+    const storedSiteId =
+      localStorage.getItem(
+        siteStorageKey,
+      )
+
+    const storedSiteIsValid =
+      Boolean(
+        storedSiteId &&
+          organizationSites.some(
+            (site) =>
+              site.id === storedSiteId &&
+              site.active,
+          ),
+      )
+
+    if (
+      storedSiteIsValid &&
+      storedSiteId
+    ) {
+      setSelectedSiteIdState(
+        storedSiteId,
+      )
+
+      return
+    }
+
+    /*
+     * Si nunca habíamos trabajado con esta
+     * organización, seleccionamos su primer
+     * sitio activo.
+     */
     const firstActiveSite =
       organizationSites.find(
-        (site) =>
-          site.active,
+        (site) => site.active,
       )
 
     if (firstActiveSite) {
-      setSites(organizationSites)
-
       setSelectedSiteIdState(
         firstActiveSite.id,
       )
 
       localStorage.setItem(
-        getSiteStorageKey(
-          user.id,
-          organizationId,
-        ),
+        siteStorageKey,
         firstActiveSite.id,
       )
     } else {
-      /*
-       * Si los sitios de la nueva organización
-       * todavía no están en el estado actual,
-       * refrescamos desde API.
-       */
-      setSites([])
-
       setSelectedSiteIdState(null)
 
-      void refreshSites()
+      localStorage.removeItem(
+        siteStorageKey,
+      )
     }
   }
 
-  /*
-   * Selección de sitio.
-   *
-   * Siempre verificamos que el sitio:
-   *
-   * 1. exista en la lista actual
-   * 2. esté activo
-   * 3. pertenezca a la organización seleccionada
-   */
+  // ============================================================
+  // CAMBIAR SITIO
+  // ============================================================
+
   function setSelectedSiteId(
     siteId: string,
   ) {
@@ -463,7 +510,9 @@ export function SiteProvider({
       return
     }
 
-    setSelectedSiteIdState(siteId)
+    setSelectedSiteIdState(
+      siteId,
+    )
 
     if (selectedOrganizationId) {
       localStorage.setItem(
@@ -475,6 +524,10 @@ export function SiteProvider({
       )
     }
   }
+
+  // ============================================================
+  // SELECCIONES DERIVADAS
+  // ============================================================
 
   const selectedOrganization =
     useMemo(
@@ -503,6 +556,10 @@ export function SiteProvider({
         selectedSiteId,
       ],
     )
+
+  // ============================================================
+  // CONTEXT VALUE
+  // ============================================================
 
   const value =
     useMemo<SiteContextValue>(
@@ -534,6 +591,8 @@ export function SiteProvider({
 
         loading,
         error,
+
+        allSites,
       ],
     )
 

@@ -147,6 +147,7 @@ model User {
 
   assignedTickets Ticket[]
   ticketComments  TicketComment[]
+  sites           UserSite[]
 
   @@index([organizationId])
 }
@@ -190,8 +191,30 @@ model Site {
 
   guests Guest[]
 
+  users UserSite[]
+
   @@unique([organizationId, code])
   @@index([organizationId])
+}
+
+// =====================
+// USER SITES
+// =====================
+
+model UserSite {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  siteId String
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, siteId])
+  @@index([userId])
+  @@index([siteId])
 }
 
 // =====================

@@ -2,6 +2,7 @@
 import type { FormEvent } from 'react'
 
 import { useAuth } from '../auth/AuthContext'
+import { useSites } from '../sites/SiteContext'
 
 import {
   createOrganization,
@@ -31,6 +32,7 @@ const emptyForm: OrganizationForm = {
 
 function OrganizationsPage() {
   const { user } = useAuth()
+  const { refreshSites } = useSites()
 
   const isSuperAdmin = user?.role === 'SUPER_ADMIN'
   const isOrgAdmin = user?.role === 'ORG_ADMIN'
@@ -170,32 +172,42 @@ function OrganizationsPage() {
           'America/Mexico_City',
       }
 
-      if (editingOrganization) {
-        const updated =
-          await updateOrganization(
-            editingOrganization.id,
-            data,
-          )
+if (editingOrganization) {
+  const updated =
+    await updateOrganization(
+      editingOrganization.id,
+      data,
+    )
 
-        setOrganizations((current) =>
-          current.map((organization) =>
-            organization.id === updated.id
-              ? updated
-              : organization,
-          ),
-        )
-      } else {
-        const created =
-          await createOrganization(data)
+  setOrganizations((current) =>
+    current.map((organization) =>
+      organization.id === updated.id
+        ? updated
+        : organization,
+    ),
+  )
+} else {
+  const created =
+    await createOrganization(data)
 
-        setOrganizations((current) =>
-          [...current, created].sort((a, b) =>
-            a.name.localeCompare(b.name),
-          ),
-        )
-      }
+  setOrganizations((current) =>
+    [...current, created].sort((a, b) =>
+      a.name.localeCompare(b.name),
+    ),
+  )
+}
 
-      closeForm()
+/*
+ * Sincronizar el contexto global.
+ *
+ * Esto actualiza nombres, organizaciones
+ * disponibles y sitios en el resto
+ * de la aplicación.
+ */
+await refreshSites()
+
+closeForm()   
+
     } catch (err) {
       console.error(err)
 
@@ -230,6 +242,7 @@ function OrganizationsPage() {
             : item,
         ),
       )
+await refreshSites()
     } catch (err) {
       console.error(err)
 
@@ -265,6 +278,7 @@ function OrganizationsPage() {
             item.id !== organization.id,
         ),
       )
+await refreshSites()
     } catch (err) {
       console.error(err)
 

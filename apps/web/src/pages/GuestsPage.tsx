@@ -1129,34 +1129,47 @@ export default function GuestsPage() {
       )
     }
 
-    if (
-      wifi.status ===
-      'ACTIVE'
-    ) {
-      return (
-        <div>
-          <div className="font-medium">
-            Acceso activo
-          </div>
+if (
+  wifi.status ===
+  'ACTIVE'
+) {
+  return (
+    <div className="space-y-1">
+      <div className="font-medium">
+        Acceso activo
+      </div>
 
-          {wifi.username && (
-            <div className="text-xs text-gray-500">
-              Usuario:{' '}
-              {wifi.username}
-            </div>
-          )}
+      {wifi.username && (
+        <div className="text-xs text-gray-500">
+          Usuario:{' '}
+          {wifi.username}
+        </div>
+      )}
 
-          {wifi.expiresAt && (
-            <div className="text-xs text-gray-500">
-              Expira:{' '}
-              {formatDate(
-                wifi.expiresAt,
-              )}
-            </div>
+      {wifi.expiresAt && (
+        <div className="text-xs text-gray-500">
+          Expira:{' '}
+          {formatDate(
+            wifi.expiresAt,
           )}
         </div>
-      )
-    }
+      )}
+
+      {wifi.accessUrl && (
+        <div className="pt-1">
+          <a
+            href={wifi.accessUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-block rounded-lg border px-3 py-2 text-xs hover:bg-gray-50"
+          >
+            Ver acceso
+          </a>
+        </div>
+      )}
+    </div>
+  )
+}   
 
     return (
       <div className="text-xs text-gray-500">
