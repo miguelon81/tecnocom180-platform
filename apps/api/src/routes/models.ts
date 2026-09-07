@@ -8,7 +8,6 @@ import {
 
 const modelsRouter = Router();
 
-// Los valores deben coincidir con el enum DeviceType de Prisma.
 const validDeviceTypes = [
   "ROUTER",
   "SWITCH",
@@ -43,12 +42,17 @@ function getModelId(req: AuthenticatedRequest) {
     : req.params.id;
 }
 
+// ============================================================
 // GET /models
+// Catálogo global: todos los roles operativos pueden leerlo.
+// ============================================================
+
 modelsRouter.get(
   "/",
   authenticateToken,
   requireRole(
     "SUPER_ADMIN",
+    "OPERATIONS",
     "ORG_ADMIN",
     "RECEPTION",
     "TECHNICIAN",
@@ -61,31 +65,42 @@ modelsRouter.get(
             brand: true,
             devices: true,
           },
-          orderBy: {
-            name: "asc",
-          },
+          orderBy: [
+            {
+              brand: {
+                name: "asc",
+              },
+            },
+            {
+              name: "asc",
+            },
+          ],
         });
 
-      res.json(models);
+      return res.json(models);
     } catch (error) {
       console.error(
         "Error fetching models:",
         error,
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "Failed to fetch models",
       });
     }
   },
 );
 
+// ============================================================
 // GET /models/:id
+// ============================================================
+
 modelsRouter.get(
   "/:id",
   authenticateToken,
   requireRole(
     "SUPER_ADMIN",
+    "OPERATIONS",
     "ORG_ADMIN",
     "RECEPTION",
     "TECHNICIAN",
@@ -114,27 +129,31 @@ modelsRouter.get(
         });
       }
 
-      res.json(model);
+      return res.json(model);
     } catch (error) {
       console.error(
         "Error fetching model:",
         error,
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "Failed to fetch model",
       });
     }
   },
 );
 
+// ============================================================
 // POST /models
+// Catálogo global: solo roles globales pueden modificarlo.
+// ============================================================
+
 modelsRouter.post(
   "/",
   authenticateToken,
   requireRole(
     "SUPER_ADMIN",
-    "ORG_ADMIN",
+    "OPERATIONS",
   ),
   async (
     req: AuthenticatedRequest,
@@ -155,6 +174,16 @@ modelsRouter.post(
       }
 
       if (
+        typeof brandId !== "string" ||
+        !brandId.trim()
+      ) {
+        return res.status(400).json({
+          error:
+            "brandId must be a non-empty string",
+        });
+      }
+
+      if (
         typeof name !== "string" ||
         !name.trim()
       ) {
@@ -171,10 +200,16 @@ modelsRouter.post(
         });
       }
 
+      const normalizedBrandId =
+        brandId.trim();
+
+      const normalizedName =
+        name.trim();
+
       const brand =
         await prisma.brand.findUnique({
           where: {
-            id: brandId,
+            id: normalizedBrandId,
           },
           select: {
             id: true,
@@ -190,8 +225,8 @@ modelsRouter.post(
       const model =
         await prisma.deviceModel.create({
           data: {
-            brandId,
-            name: name.trim(),
+            brandId: normalizedBrandId,
+            name: normalizedName,
             type,
           },
           include: {
@@ -200,12 +235,24 @@ modelsRouter.post(
           },
         });
 
-      res.status(201).json(model);
+      return res.status(201).json(model);
     } catch (error) {
       console.error(
         "Error creating model:",
         error,
       );
+
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2002"
+      ) {
+        return res.status(409).json({
+          error:
+            "This model already exists for the selected brand",
+        });
+      }
 
       if (
         typeof error === "object" &&
@@ -218,20 +265,23 @@ modelsRouter.post(
         });
       }
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "Failed to create model",
       });
     }
   },
 );
 
+// ============================================================
 // PATCH /models/:id
+// ============================================================
+
 modelsRouter.patch(
   "/:id",
   authenticateToken,
   requireRole(
     "SUPER_ADMIN",
-    "ORG_ADMIN",
+    "OPERATIONS",
   ),
   async (
     req: AuthenticatedRequest,
@@ -258,6 +308,19 @@ modelsRouter.patch(
       }
 
       if (
+        brandId !== undefined &&
+        (
+          typeof brandId !== "string" ||
+          !brandId.trim()
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "brandId must be a non-empty string",
+        });
+      }
+
+      if (
         name !== undefined &&
         (
           typeof name !== "string" ||
@@ -280,11 +343,16 @@ modelsRouter.patch(
         });
       }
 
-      if (brandId !== undefined) {
+      const normalizedBrandId =
+        typeof brandId === "string"
+          ? brandId.trim()
+          : undefined;
+
+      if (normalizedBrandId !== undefined) {
         const brand =
           await prisma.brand.findUnique({
             where: {
-              id: brandId,
+              id: normalizedBrandId,
             },
             select: {
               id: true,
@@ -307,11 +375,13 @@ modelsRouter.patch(
             ...(name !== undefined && {
               name: name.trim(),
             }),
+
             ...(type !== undefined && {
               type,
             }),
-            ...(brandId !== undefined && {
-              brandId,
+
+            ...(normalizedBrandId !== undefined && {
+              brandId: normalizedBrandId,
             }),
           },
           include: {
@@ -320,12 +390,24 @@ modelsRouter.patch(
           },
         });
 
-      res.json(model);
+      return res.json(model);
     } catch (error) {
       console.error(
         "Error updating model:",
         error,
       );
+
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2002"
+      ) {
+        return res.status(409).json({
+          error:
+            "This model already exists for the selected brand",
+        });
+      }
 
       if (
         typeof error === "object" &&
@@ -349,20 +431,23 @@ modelsRouter.patch(
         });
       }
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "Failed to update model",
       });
     }
   },
 );
 
+// ============================================================
 // DELETE /models/:id
+// ============================================================
+
 modelsRouter.delete(
   "/:id",
   authenticateToken,
   requireRole(
     "SUPER_ADMIN",
-    "ORG_ADMIN",
+    "OPERATIONS",
   ),
   async (
     req: AuthenticatedRequest,
@@ -377,7 +462,7 @@ modelsRouter.delete(
         },
       });
 
-      res.status(204).send();
+      return res.status(204).send();
     } catch (error) {
       console.error(
         "Error deleting model:",
@@ -407,7 +492,7 @@ modelsRouter.delete(
         });
       }
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "Failed to delete model",
       });
     }

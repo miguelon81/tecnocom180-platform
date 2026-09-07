@@ -18,6 +18,13 @@ const deviceInclude = {
   },
 };
 
+function isGlobalRole(req: AuthenticatedRequest) {
+  return (
+    req.user?.role === "SUPER_ADMIN" ||
+    req.user?.role === "OPERATIONS"
+  );
+}
+
 function canAccessOrganization(
   req: AuthenticatedRequest,
   organizationId: string,
@@ -26,17 +33,105 @@ function canAccessOrganization(
     return false;
   }
 
-  if (req.user.role === "SUPER_ADMIN") {
+  if (isGlobalRole(req)) {
     return true;
   }
 
   return req.user.organizationId === organizationId;
 }
 
+function requiresSiteAssignment(req: AuthenticatedRequest) {
+  return (
+    req.user?.role === "RECEPTION" ||
+    req.user?.role === "TECHNICIAN"
+  );
+}
+
+async function canAccessSite(
+  req: AuthenticatedRequest,
+  siteId: string,
+) {
+  if (!req.user) {
+    return false;
+  }
+
+  if (isGlobalRole(req)) {
+    return true;
+  }
+
+  const site = await prisma.site.findUnique({
+    where: {
+      id: siteId,
+    },
+    select: {
+      organizationId: true,
+    },
+  });
+
+  if (!site) {
+    return false;
+  }
+
+  if (site.organizationId !== req.user.organizationId) {
+    return false;
+  }
+
+  if (!requiresSiteAssignment(req)) {
+    return true;
+  }
+
+  const assignment = await prisma.userSite.findUnique({
+    where: {
+      userId_siteId: {
+        userId: req.user.userId,
+        siteId,
+      },
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  return Boolean(assignment);
+}
+
+async function getAccessibleSiteIds(
+  req: AuthenticatedRequest,
+) {
+  if (!req.user || !requiresSiteAssignment(req)) {
+    return undefined;
+  }
+
+  const assignments = await prisma.userSite.findMany({
+    where: {
+      userId: req.user.userId,
+    },
+    select: {
+      siteId: true,
+    },
+  });
+
+  return assignments.map((assignment) => assignment.siteId);
+}
+
 function getDeviceId(req: AuthenticatedRequest) {
   return Array.isArray(req.params.id)
     ? req.params.id[0]
     : req.params.id;
+}
+
+function optionalText(value: unknown) {
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 async function generateDeviceCode() {
@@ -59,10 +154,17 @@ async function generateDeviceCode() {
   let nextNumber = 1;
 
   if (lastDevice?.deviceCode) {
-    const numericPart = lastDevice.deviceCode.replace(prefix, "");
+    const numericPart = lastDevice.deviceCode.replace(
+      prefix,
+      "",
+    );
+
     const parsedNumber = Number(numericPart);
 
-    if (Number.isInteger(parsedNumber) && parsedNumber > 0) {
+    if (
+      Number.isInteger(parsedNumber) &&
+      parsedNumber > 0
+    ) {
       nextNumber = parsedNumber + 1;
     }
   }
@@ -70,15 +172,19 @@ async function generateDeviceCode() {
   return `${prefix}${String(nextNumber).padStart(6, "0")}`;
 }
 
+// ============================================================
 // GET /devices
 // GET /devices?siteId=xxx
 // GET /devices?areaId=xxx
 // GET /devices?modelId=xxx
+// ============================================================
+
 devicesRouter.get(
   "/",
   authenticateToken,
   requireRole(
     "SUPER_ADMIN",
+    "OPERATIONS",
     "ORG_ADMIN",
     "RECEPTION",
     "TECHNICIAN",
@@ -108,6 +214,7 @@ devicesRouter.get(
             id: siteId,
           },
           select: {
+            id: true,
             organizationId: true,
           },
         });
@@ -118,14 +225,26 @@ devicesRouter.get(
           });
         }
 
-        if (!canAccessOrganization(req, site.organizationId)) {
+        if (
+          !canAccessOrganization(
+            req,
+            site.organizationId,
+          )
+        ) {
           return res.status(403).json({
-            error: "Access denied for this organization",
+            error:
+              "Access denied for this organization",
+          });
+        }
+
+        if (!(await canAccessSite(req, site.id))) {
+          return res.status(403).json({
+            error: "Access denied for this site",
           });
         }
 
         organizationId = site.organizationId;
-      } else if (req.user!.role !== "SUPER_ADMIN") {
+      } else if (!isGlobalRole(req)) {
         organizationId = req.user!.organizationId;
       }
 
@@ -150,30 +269,45 @@ devicesRouter.get(
           });
         }
 
-        if (!canAccessOrganization(req, area.site.organizationId)) {
+        if (
+          !canAccessOrganization(
+            req,
+            area.site.organizationId,
+          )
+        ) {
           return res.status(403).json({
-            error: "Access denied for this organization",
+            error:
+              "Access denied for this organization",
+          });
+        }
+
+        if (!(await canAccessSite(req, area.siteId))) {
+          return res.status(403).json({
+            error: "Access denied for this site",
           });
         }
 
         if (siteId && area.siteId !== siteId) {
           return res.status(400).json({
-            error: "Area does not belong to the specified site",
+            error:
+              "Area does not belong to the specified site",
           });
         }
 
-        organizationId ??= area.site.organizationId;
+        organizationId ??=
+          area.site.organizationId;
       }
 
       if (modelId) {
-        const model = await prisma.deviceModel.findUnique({
-          where: {
-            id: modelId,
-          },
-          select: {
-            id: true,
-          },
-        });
+        const model =
+          await prisma.deviceModel.findUnique({
+            where: {
+              id: modelId,
+            },
+            select: {
+              id: true,
+            },
+          });
 
         if (!model) {
           return res.status(404).json({
@@ -182,6 +316,9 @@ devicesRouter.get(
         }
       }
 
+      const accessibleSiteIds =
+        await getAccessibleSiteIds(req);
+
       const devices = await prisma.device.findMany({
         where: {
           ...(organizationId && {
@@ -189,14 +326,23 @@ devicesRouter.get(
               organizationId,
             },
           }),
+
           ...(siteId && {
             siteId,
           }),
+
           ...(areaId && {
             areaId,
           }),
+
           ...(modelId && {
             modelId,
+          }),
+
+          ...(accessibleSiteIds && {
+            siteId: {
+              in: accessibleSiteIds,
+            },
           }),
         },
         include: deviceInclude,
@@ -216,64 +362,16 @@ devicesRouter.get(
   },
 );
 
-// GET /devices/:id
-devicesRouter.get(
-  "/:id",
-  authenticateToken,
-  requireRole(
-    "SUPER_ADMIN",
-    "ORG_ADMIN",
-    "RECEPTION",
-    "TECHNICIAN",
-  ),
-  async (req: AuthenticatedRequest, res) => {
-    try {
-      const deviceId = getDeviceId(req);
-
-      const device = await prisma.device.findUnique({
-        where: {
-          id: deviceId,
-        },
-        include: {
-          ...deviceInclude,
-          tickets: true,
-        },
-      });
-
-      if (!device) {
-        return res.status(404).json({
-          error: "Device not found",
-        });
-      }
-
-      if (
-        !canAccessOrganization(
-          req,
-          device.site.organizationId,
-        )
-      ) {
-        return res.status(403).json({
-          error: "Access denied for this organization",
-        });
-      }
-
-      return res.json(device);
-    } catch (error) {
-      console.error("Error fetching device:", error);
-
-      return res.status(500).json({
-        error: "Failed to fetch device",
-      });
-    }
-  },
-);
-
+// ============================================================
 // GET /devices/:id/telemetry
+// ============================================================
+
 devicesRouter.get(
   "/:id/telemetry",
   authenticateToken,
   requireRole(
     "SUPER_ADMIN",
+    "OPERATIONS",
     "ORG_ADMIN",
     "RECEPTION",
     "TECHNICIAN",
@@ -289,6 +387,7 @@ devicesRouter.get(
         select: {
           id: true,
           deviceCode: true,
+          siteId: true,
           site: {
             select: {
               organizationId: true,
@@ -310,7 +409,14 @@ devicesRouter.get(
         )
       ) {
         return res.status(403).json({
-          error: "Access denied for this organization",
+          error:
+            "Access denied for this organization",
+        });
+      }
+
+      if (!(await canAccessSite(req, device.siteId))) {
+        return res.status(403).json({
+          error: "Access denied for this site",
         });
       }
 
@@ -343,12 +449,16 @@ devicesRouter.get(
   },
 );
 
+// ============================================================
 // GET /devices/:id/telemetry/latest
+// ============================================================
+
 devicesRouter.get(
   "/:id/telemetry/latest",
   authenticateToken,
   requireRole(
     "SUPER_ADMIN",
+    "OPERATIONS",
     "ORG_ADMIN",
     "RECEPTION",
     "TECHNICIAN",
@@ -364,6 +474,7 @@ devicesRouter.get(
         select: {
           id: true,
           deviceCode: true,
+          siteId: true,
           site: {
             select: {
               organizationId: true,
@@ -385,7 +496,14 @@ devicesRouter.get(
         )
       ) {
         return res.status(403).json({
-          error: "Access denied for this organization",
+          error:
+            "Access denied for this organization",
+        });
+      }
+
+      if (!(await canAccessSite(req, device.siteId))) {
+        return res.status(403).json({
+          error: "Access denied for this site",
         });
       }
 
@@ -401,7 +519,8 @@ devicesRouter.get(
 
       if (!telemetry) {
         return res.status(404).json({
-          error: "No telemetry found for this device",
+          error:
+            "No telemetry found for this device",
         });
       }
 
@@ -417,30 +536,102 @@ devicesRouter.get(
       );
 
       return res.status(500).json({
-        error: "Failed to fetch latest device telemetry",
+        error:
+          "Failed to fetch latest device telemetry",
       });
     }
   },
 );
 
+// ============================================================
+// GET /devices/:id
+// ============================================================
+
+devicesRouter.get(
+  "/:id",
+  authenticateToken,
+  requireRole(
+    "SUPER_ADMIN",
+    "OPERATIONS",
+    "ORG_ADMIN",
+    "RECEPTION",
+    "TECHNICIAN",
+  ),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const deviceId = getDeviceId(req);
+
+      const device = await prisma.device.findUnique({
+        where: {
+          id: deviceId,
+        },
+        include: {
+          ...deviceInclude,
+          tickets: true,
+        },
+      });
+
+      if (!device) {
+        return res.status(404).json({
+          error: "Device not found",
+        });
+      }
+
+      if (
+        !canAccessOrganization(
+          req,
+          device.site.organizationId,
+        )
+      ) {
+        return res.status(403).json({
+          error:
+            "Access denied for this organization",
+        });
+      }
+
+      if (!(await canAccessSite(req, device.siteId))) {
+        return res.status(403).json({
+          error: "Access denied for this site",
+        });
+      }
+
+      return res.json(device);
+    } catch (error) {
+      console.error("Error fetching device:", error);
+
+      return res.status(500).json({
+        error: "Failed to fetch device",
+      });
+    }
+  },
+);
+
+// ============================================================
 // POST /devices
+// ============================================================
+
 devicesRouter.post(
   "/",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN"),
+  requireRole(
+    "SUPER_ADMIN",
+    "OPERATIONS",
+    "ORG_ADMIN",
+  ),
   async (req: AuthenticatedRequest, res) => {
     try {
       const {
         siteId,
         areaId,
         modelId,
+        name,
         hostname,
         serial,
         ip,
         mac,
         firmware,
-        online,
         installedAt,
+        notes,
       } = req.body;
 
       if (!siteId || !modelId) {
@@ -465,20 +656,27 @@ devicesRouter.post(
         });
       }
 
-      if (!canAccessOrganization(req, site.organizationId)) {
+      if (
+        !canAccessOrganization(
+          req,
+          site.organizationId,
+        )
+      ) {
         return res.status(403).json({
-          error: "Access denied for this organization",
+          error:
+            "Access denied for this organization",
         });
       }
 
-      const model = await prisma.deviceModel.findUnique({
-        where: {
-          id: modelId,
-        },
-        select: {
-          id: true,
-        },
-      });
+      const model =
+        await prisma.deviceModel.findUnique({
+          where: {
+            id: modelId,
+          },
+          select: {
+            id: true,
+          },
+        });
 
       if (!model) {
         return res.status(404).json({
@@ -510,7 +708,8 @@ devicesRouter.post(
 
         if (area.siteId !== siteId) {
           return res.status(400).json({
-            error: "Area does not belong to the specified site",
+            error:
+              "Area does not belong to the specified site",
           });
         }
 
@@ -521,29 +720,36 @@ devicesRouter.post(
           )
         ) {
           return res.status(403).json({
-            error: "Access denied for this organization",
+            error:
+              "Access denied for this organization",
           });
         }
       }
 
-      const deviceCode = await generateDeviceCode();
+      const deviceCode =
+        await generateDeviceCode();
 
       const device = await prisma.device.create({
         data: {
-        deviceCode,
-        siteId,
-        areaId: areaId ?? null,
-        modelId,
-          hostname,
-          serial,
-          ip,
-          mac,
-          firmware,
-          ...(online !== undefined && {
-            online,
-          }),
+          deviceCode,
+          siteId,
+          areaId: areaId ?? null,
+          modelId,
+
+          name: optionalText(name),
+          hostname: optionalText(hostname),
+          serial: optionalText(serial),
+          ip: optionalText(ip),
+          mac: optionalText(mac),
+          firmware: optionalText(firmware),
+          notes: optionalText(notes),
+
           ...(installedAt !== undefined && {
-            installedAt,
+            installedAt:
+              installedAt === null ||
+              installedAt === ""
+                ? null
+                : new Date(installedAt),
           }),
         },
         include: deviceInclude,
@@ -583,11 +789,18 @@ devicesRouter.post(
   },
 );
 
+// ============================================================
 // PATCH /devices/:id
+// ============================================================
+
 devicesRouter.patch(
   "/:id",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN"),
+  requireRole(
+    "SUPER_ADMIN",
+    "OPERATIONS",
+    "ORG_ADMIN",
+  ),
   async (req: AuthenticatedRequest, res) => {
     try {
       const deviceId = getDeviceId(req);
@@ -596,13 +809,14 @@ devicesRouter.patch(
         siteId,
         areaId,
         modelId,
+        name,
         hostname,
         serial,
         ip,
         mac,
         firmware,
-        online,
         installedAt,
+        notes,
       } = req.body;
 
       const existingDevice =
@@ -635,7 +849,8 @@ devicesRouter.patch(
         )
       ) {
         return res.status(403).json({
-          error: "Access denied for this organization",
+          error:
+            "Access denied for this organization",
         });
       }
 
@@ -646,15 +861,16 @@ devicesRouter.patch(
         existingDevice.site.organizationId;
 
       if (siteId !== undefined) {
-        const targetSite = await prisma.site.findUnique({
-          where: {
-            id: siteId,
-          },
-          select: {
-            id: true,
-            organizationId: true,
-          },
-        });
+        const targetSite =
+          await prisma.site.findUnique({
+            where: {
+              id: siteId,
+            },
+            select: {
+              id: true,
+              organizationId: true,
+            },
+          });
 
         if (!targetSite) {
           return res.status(404).json({
@@ -668,11 +884,11 @@ devicesRouter.patch(
         if (
           targetOrganizationId !==
             existingDevice.site.organizationId &&
-          req.user!.role !== "SUPER_ADMIN"
+          !isGlobalRole(req)
         ) {
           return res.status(403).json({
             error:
-              "Only SUPER_ADMIN can move a device between organizations",
+              "Only SUPER_ADMIN or OPERATIONS can move a device between organizations",
           });
         }
 
@@ -683,7 +899,8 @@ devicesRouter.patch(
           )
         ) {
           return res.status(403).json({
-            error: "Access denied for target organization",
+            error:
+              "Access denied for target organization",
           });
         }
       }
@@ -706,26 +923,24 @@ devicesRouter.patch(
         }
       }
 
-      /*
-       * Regla importante:
-       *
-       * Si se cambia de Site y no se especifica un nuevo Area,
-       * el dispositivo debe quedar sin Area.
-       *
-       * Esto evita conservar un areaId perteneciente al Site anterior.
-       */
       const siteIsChanging =
         siteId !== undefined &&
         siteId !== existingDevice.siteId;
 
-      let targetAreaId: string | null | undefined =
+      const targetAreaId:
+        | string
+        | null
+        | undefined =
         areaId !== undefined
           ? areaId
           : siteIsChanging
             ? null
             : existingDevice.areaId;
 
-      if (targetAreaId !== null && targetAreaId !== undefined) {
+      if (
+        targetAreaId !== null &&
+        targetAreaId !== undefined
+      ) {
         const area = await prisma.area.findUnique({
           where: {
             id: targetAreaId,
@@ -749,7 +964,8 @@ devicesRouter.patch(
 
         if (area.siteId !== targetSiteId) {
           return res.status(400).json({
-            error: "Area does not belong to the specified site",
+            error:
+              "Area does not belong to the specified site",
           });
         }
 
@@ -760,7 +976,8 @@ devicesRouter.patch(
           )
         ) {
           return res.status(403).json({
-            error: "Access denied for area organization",
+            error:
+              "Access denied for area organization",
           });
         }
 
@@ -783,34 +1000,52 @@ devicesRouter.patch(
           ...(siteId !== undefined && {
             siteId,
           }),
-          ...(areaId !== undefined || siteIsChanging
+
+          ...(areaId !== undefined ||
+          siteIsChanging
             ? {
                 areaId: targetAreaId,
               }
             : {}),
+
           ...(modelId !== undefined && {
             modelId,
           }),
+
+          ...(name !== undefined && {
+            name: optionalText(name),
+          }),
+
           ...(hostname !== undefined && {
-            hostname,
+            hostname: optionalText(hostname),
           }),
+
           ...(serial !== undefined && {
-            serial,
+            serial: optionalText(serial),
           }),
+
           ...(ip !== undefined && {
-            ip,
+            ip: optionalText(ip),
           }),
+
           ...(mac !== undefined && {
-            mac,
+            mac: optionalText(mac),
           }),
+
           ...(firmware !== undefined && {
-            firmware,
+            firmware: optionalText(firmware),
           }),
-          ...(online !== undefined && {
-            online,
+
+          ...(notes !== undefined && {
+            notes: optionalText(notes),
           }),
+
           ...(installedAt !== undefined && {
-            installedAt,
+            installedAt:
+              installedAt === null ||
+              installedAt === ""
+                ? null
+                : new Date(installedAt),
           }),
         },
         include: {
@@ -864,11 +1099,18 @@ devicesRouter.patch(
   },
 );
 
+// ============================================================
 // DELETE /devices/:id
+// ============================================================
+
 devicesRouter.delete(
   "/:id",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN"),
+  requireRole(
+    "SUPER_ADMIN",
+    "OPERATIONS",
+    "ORG_ADMIN",
+  ),
   async (req: AuthenticatedRequest, res) => {
     try {
       const deviceId = getDeviceId(req);
@@ -901,7 +1143,8 @@ devicesRouter.delete(
         )
       ) {
         return res.status(403).json({
-          error: "Access denied for this organization",
+          error:
+            "Access denied for this organization",
         });
       }
 

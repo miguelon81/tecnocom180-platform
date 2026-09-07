@@ -419,6 +419,7 @@ model DeviceModel {
 
   devices Device[]
 
+  @@unique([brandId, name])
   @@index([brandId])
 }
 
@@ -443,6 +444,8 @@ model Device {
 
   model DeviceModel @relation(fields: [modelId], references: [id])
 
+  name String?
+
   hostname String?
 
   serial String?
@@ -455,7 +458,11 @@ model Device {
 
   online Boolean @default(false)
 
+  lastSeenAt DateTime?
+
   installedAt DateTime?
+
+  notes String?
 
   createdAt DateTime @default(now())
 

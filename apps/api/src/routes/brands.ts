@@ -14,12 +14,17 @@ function getBrandId(req: AuthenticatedRequest) {
     : req.params.id;
 }
 
+// ============================================================
 // GET /brands
+// Catálogo global: todos los roles operativos pueden leerlo.
+// ============================================================
+
 brandsRouter.get(
   "/",
   authenticateToken,
   requireRole(
     "SUPER_ADMIN",
+    "OPERATIONS",
     "ORG_ADMIN",
     "RECEPTION",
     "TECHNICIAN",
@@ -35,23 +40,27 @@ brandsRouter.get(
         },
       });
 
-      res.json(brands);
+      return res.json(brands);
     } catch (error) {
       console.error("Error fetching brands:", error);
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "Failed to fetch brands",
       });
     }
   },
 );
 
+// ============================================================
 // GET /brands/:id
+// ============================================================
+
 brandsRouter.get(
   "/:id",
   authenticateToken,
   requireRole(
     "SUPER_ADMIN",
+    "OPERATIONS",
     "ORG_ADMIN",
     "RECEPTION",
     "TECHNICIAN",
@@ -79,22 +88,26 @@ brandsRouter.get(
         });
       }
 
-      res.json(brand);
+      return res.json(brand);
     } catch (error) {
       console.error("Error fetching brand:", error);
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "Failed to fetch brand",
       });
     }
   },
 );
 
+// ============================================================
 // POST /brands
+// Catálogo global: solo roles globales pueden modificarlo.
+// ============================================================
+
 brandsRouter.post(
   "/",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN"),
+  requireRole("SUPER_ADMIN", "OPERATIONS"),
   async (req: AuthenticatedRequest, res) => {
     try {
       const { name } = req.body;
@@ -115,7 +128,7 @@ brandsRouter.post(
         },
       });
 
-      res.status(201).json(brand);
+      return res.status(201).json(brand);
     } catch (error) {
       console.error("Error creating brand:", error);
 
@@ -130,18 +143,21 @@ brandsRouter.post(
         });
       }
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "Failed to create brand",
       });
     }
   },
 );
 
+// ============================================================
 // PATCH /brands/:id
+// ============================================================
+
 brandsRouter.patch(
   "/:id",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN"),
+  requireRole("SUPER_ADMIN", "OPERATIONS"),
   async (req: AuthenticatedRequest, res) => {
     try {
       const brandId = getBrandId(req);
@@ -169,7 +185,7 @@ brandsRouter.patch(
         },
       });
 
-      res.json(brand);
+      return res.json(brand);
     } catch (error) {
       console.error("Error updating brand:", error);
 
@@ -195,18 +211,21 @@ brandsRouter.patch(
         });
       }
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "Failed to update brand",
       });
     }
   },
 );
 
+// ============================================================
 // DELETE /brands/:id
+// ============================================================
+
 brandsRouter.delete(
   "/:id",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN"),
+  requireRole("SUPER_ADMIN", "OPERATIONS"),
   async (req: AuthenticatedRequest, res) => {
     try {
       const brandId = getBrandId(req);
@@ -232,7 +251,7 @@ brandsRouter.delete(
         },
       });
 
-      res.status(204).send();
+      return res.status(204).send();
     } catch (error) {
       console.error("Error deleting brand:", error);
 
@@ -259,7 +278,7 @@ brandsRouter.delete(
         });
       }
 
-      res.status(500).json({
+      return res.status(500).json({
         error: "Failed to delete brand",
       });
     }
