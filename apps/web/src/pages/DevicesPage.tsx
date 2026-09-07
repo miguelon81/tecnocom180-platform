@@ -1,5 +1,4 @@
-﻿
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 
 import { apiFetch } from '../api/client'
@@ -21,18 +20,24 @@ import type { Site, Area } from '../types/site'
 import type { Brand } from '../api/brands'
 import type { DeviceModel } from '../api/models'
 
+import { useAuth } from '../auth/AuthContext'
+
 type Device = {
   id: string
   deviceCode?: string | null
   siteId: string
   areaId?: string | null
   modelId: string
+  name?: string | null
   hostname?: string | null
   serial?: string | null
   ip?: string | null
   mac?: string | null
   firmware?: string | null
   online: boolean
+  lastSeenAt?: string | null
+  installedAt?: string | null
+  notes?: string | null
   site?: {
     id: string
     name: string
@@ -57,12 +62,14 @@ type DeviceForm = {
   areaId: string
   brandId: string
   modelId: string
+  name: string
   hostname: string
   serial: string
   ip: string
   mac: string
   firmware: string
-  online: boolean
+  installedAt: string
+  notes: string
 }
 
 const emptyForm: DeviceForm = {
@@ -70,15 +77,31 @@ const emptyForm: DeviceForm = {
   areaId: '',
   brandId: '',
   modelId: '',
+  name: '',
   hostname: '',
   serial: '',
   ip: '',
   mac: '',
   firmware: '',
-  online: false,
+  installedAt: '',
+  notes: '',
 }
 
 function formatTelemetryDate(value: string) {
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+
+  return date.toLocaleString('es-MX')
+}
+
+function formatDate(value?: string | null) {
+  if (!value) {
+    return '—'
+  }
+
   const date = new Date(value)
 
   if (Number.isNaN(date.getTime())) {
@@ -100,9 +123,17 @@ function formatNumber(
 }
 
 function DevicesPage() {
+  const { user } = useAuth()
+
+  const canManageDevices =
+    user?.role === 'SUPER_ADMIN' ||
+    user?.role === 'OPERATIONS' ||
+    user?.role === 'ORG_ADMIN'
+
   const [devices, setDevices] = useState<Device[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [areas, setAreas] = useState<Area[]>([])
+  const [formAreas, setFormAreas] = useState<Area[]>([])
   const [brands, setBrands] = useState<Brand[]>([])
   const [models, setModels] = useState<DeviceModel[]>([])
 
@@ -276,6 +307,39 @@ function DevicesPage() {
   }, [selectedSiteId])
 
   useEffect(() => {
+    if (!form.siteId) {
+      setFormAreas([])
+      return
+    }
+
+    async function loadFormAreas() {
+      try {
+        const data =
+          await getAreas(
+            form.siteId,
+          )
+
+        setFormAreas(data)
+
+        setForm((current) => ({
+          ...current,
+          areaId: data.some(
+            (area) =>
+              area.id === current.areaId,
+          )
+            ? current.areaId
+            : '',
+        }))
+      } catch (err) {
+        console.error(err)
+        setFormAreas([])
+      }
+    }
+
+    loadFormAreas()
+  }, [form.siteId])
+
+  useEffect(() => {
     if (sites.length === 0) {
       return
     }
@@ -379,15 +443,13 @@ function DevicesPage() {
     )
 
     setSelectedTelemetry(null)
-
     setTelemetryHistory([])
-
     setTelemetryError(null)
   }
 
   function handleFormChange(
     field: keyof DeviceForm,
-    value: string | boolean,
+    value: string,
   ) {
     setForm((current) => ({
       ...current,
@@ -396,12 +458,15 @@ function DevicesPage() {
   }
 
   function openCreateForm() {
+    if (!canManageDevices) {
+      return
+    }
+
     setEditingDevice(null)
 
     setForm({
       ...emptyForm,
       siteId: selectedSiteId,
-      areaId: '',
     })
 
     setFormError(null)
@@ -411,6 +476,10 @@ function DevicesPage() {
   function openEditForm(
     device: Device,
   ) {
+    if (!canManageDevices) {
+      return
+    }
+
     const brandId =
       device.model?.brand?.id ?? ''
 
@@ -422,6 +491,8 @@ function DevicesPage() {
         device.areaId ?? '',
       brandId,
       modelId: device.modelId,
+      name:
+        device.name ?? '',
       hostname:
         device.hostname ?? '',
       serial:
@@ -432,8 +503,12 @@ function DevicesPage() {
         device.mac ?? '',
       firmware:
         device.firmware ?? '',
-      online:
-        device.online,
+      installedAt:
+        device.installedAt
+          ? device.installedAt.slice(0, 10)
+          : '',
+      notes:
+        device.notes ?? '',
     })
 
     setFormError(null)
@@ -448,6 +523,7 @@ function DevicesPage() {
     setShowForm(false)
     setEditingDevice(null)
     setForm(emptyForm)
+    setFormAreas([])
     setFormError(null)
   }
 
@@ -455,6 +531,13 @@ function DevicesPage() {
     event: FormEvent<HTMLFormElement>,
   ) {
     event.preventDefault()
+
+    if (!canManageDevices) {
+      setFormError(
+        'No tienes permisos para modificar dispositivos',
+      )
+      return
+    }
 
     if (!form.siteId) {
       setFormError(
@@ -479,6 +562,9 @@ function DevicesPage() {
         areaId:
           form.areaId || null,
         modelId: form.modelId,
+        name:
+          form.name.trim() ||
+          null,
         hostname:
           form.hostname.trim() ||
           null,
@@ -494,7 +580,15 @@ function DevicesPage() {
         firmware:
           form.firmware.trim() ||
           null,
-        online: form.online,
+        installedAt:
+          form.installedAt
+            ? new Date(
+                `${form.installedAt}T12:00:00`,
+              ).toISOString()
+            : null,
+        notes:
+          form.notes.trim() ||
+          null,
       }
 
       if (editingDevice) {
@@ -520,20 +614,6 @@ function DevicesPage() {
               'No se pudo actualizar el dispositivo',
           )
         }
-
-        const updatedDevice =
-          await response.json()
-
-        setDevices(
-          (current) =>
-            current.map(
-              (device) =>
-                device.id ===
-                updatedDevice.id
-                  ? updatedDevice
-                  : device,
-            ),
-        )
       } else {
         const response =
           await apiFetch(
@@ -557,19 +637,10 @@ function DevicesPage() {
               'No se pudo crear el dispositivo',
           )
         }
-
-        const createdDevice =
-          await response.json()
-
-        setDevices(
-          (current) => [
-            createdDevice,
-            ...current,
-          ],
-        )
       }
 
       closeForm()
+      await loadDevices()
     } catch (err) {
       console.error(err)
 
@@ -586,7 +657,12 @@ function DevicesPage() {
   async function handleDelete(
     device: Device,
   ) {
+    if (!canManageDevices) {
+      return
+    }
+
     const name =
+      device.name ??
       device.hostname ??
       device.deviceCode ??
       device.serial ??
@@ -631,13 +707,7 @@ function DevicesPage() {
         closeTelemetry()
       }
 
-      setDevices(
-        (current) =>
-          current.filter(
-            (item) =>
-              item.id !== device.id,
-          ),
-      )
+      await loadDevices()
     } catch (err) {
       console.error(err)
 
@@ -821,19 +891,21 @@ function DevicesPage() {
               </select>
             </label>
 
-            <button
-              type="button"
-              onClick={
-                openCreateForm
-              }
-            >
-              + Nuevo dispositivo
-            </button>
+            {canManageDevices && (
+              <button
+                type="button"
+                onClick={
+                  openCreateForm
+                }
+              >
+                + Nuevo dispositivo
+              </button>
+            )}
           </div>
         </section>
       )}
 
-      {showForm && (
+      {showForm && canManageDevices && (
         <section
           className="card"
           style={{
@@ -848,7 +920,8 @@ function DevicesPage() {
 
           <h2>
             {editingDevice
-              ? editingDevice.hostname ??
+              ? editingDevice.name ??
+                editingDevice.hostname ??
                 editingDevice.deviceCode ??
                 editingDevice.serial ??
                 'Dispositivo'
@@ -892,9 +965,6 @@ function DevicesPage() {
                       '',
                     )
                   }}
-                  disabled={
-                    !!editingDevice
-                  }
                 >
                   <option value="">
                     Selecciona un sitio
@@ -931,22 +1001,16 @@ function DevicesPage() {
                     Sin área
                   </option>
 
-                  {areas
-                    .filter(
-                      (area) =>
-                        area.siteId ===
-                        form.siteId,
-                    )
-                    .map(
-                      (area) => (
-                        <option
-                          key={area.id}
-                          value={area.id}
-                        >
-                          {area.name}
-                        </option>
-                      ),
-                    )}
+                  {formAreas.map(
+                    (area) => (
+                      <option
+                        key={area.id}
+                        value={area.id}
+                      >
+                        {area.name}
+                      </option>
+                    ),
+                  )}
                 </select>
               </label>
 
@@ -1018,6 +1082,24 @@ function DevicesPage() {
                     ),
                   )}
                 </select>
+              </label>
+
+              <label>
+                Nombre
+
+                <input
+                  type="text"
+                  value={
+                    form.name
+                  }
+                  onChange={(event) =>
+                    handleFormChange(
+                      'name',
+                      event.target.value,
+                    )
+                  }
+                  placeholder="AP Lobby"
+                />
               </label>
 
               <label>
@@ -1104,27 +1186,44 @@ function DevicesPage() {
                 />
               </label>
 
-              <label
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                }}
-              >
+              <label>
+                Fecha de instalación
+
                 <input
-                  type="checkbox"
-                  checked={
-                    form.online
+                  type="date"
+                  value={
+                    form.installedAt
                   }
                   onChange={(event) =>
                     handleFormChange(
-                      'online',
-                      event.target.checked,
+                      'installedAt',
+                      event.target.value,
                     )
                   }
                 />
+              </label>
 
-                Online
+              <label
+                style={{
+                  gridColumn:
+                    '1 / -1',
+                }}
+              >
+                Notas
+
+                <textarea
+                  value={
+                    form.notes
+                  }
+                  onChange={(event) =>
+                    handleFormChange(
+                      'notes',
+                      event.target.value,
+                    )
+                  }
+                  rows={3}
+                  placeholder="Observaciones, ubicación física, puertos, configuración, etc."
+                />
               </label>
             </div>
 
@@ -1187,7 +1286,12 @@ function DevicesPage() {
                   (device) =>
                     device.id ===
                     selectedTelemetryDeviceId,
-                )?.deviceCode ??
+                )?.name ??
+                  devices.find(
+                    (device) =>
+                      device.id ===
+                      selectedTelemetryDeviceId,
+                  )?.deviceCode ??
                   'Dispositivo'}
               </h2>
             </div>
@@ -1602,6 +1706,10 @@ function DevicesPage() {
                 </th>
 
                 <th>
+                  Última conexión
+                </th>
+
+                <th>
                   Acciones
                 </th>
               </tr>
@@ -1615,10 +1723,25 @@ function DevicesPage() {
                   >
                     <td>
                       <strong>
-                        {device.hostname ||
+                        {device.name ||
+                          device.hostname ||
                           device.serial ||
+                          device.deviceCode ||
                           device.id}
                       </strong>
+
+                      {device.name &&
+                        device.hostname && (
+                          <div
+                            style={{
+                              opacity: 0.65,
+                              fontSize: '0.85rem',
+                              marginTop: '4px',
+                            }}
+                          >
+                            {device.hostname}
+                          </div>
+                        )}
                     </td>
 
                     <td>
@@ -1662,6 +1785,12 @@ function DevicesPage() {
                     </td>
 
                     <td>
+                      {formatDate(
+                        device.lastSeenAt,
+                      )}
+                    </td>
+
+                    <td>
                       <div
                         style={{
                           display:
@@ -1682,27 +1811,31 @@ function DevicesPage() {
                           Telemetría
                         </button>
 
-                        <button
-                          type="button"
-                          onClick={() =>
-                            openEditForm(
-                              device,
-                            )
-                          }
-                        >
-                          Editar
-                        </button>
+                        {canManageDevices && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openEditForm(
+                                  device,
+                                )
+                              }
+                            >
+                              Editar
+                            </button>
 
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleDelete(
-                              device,
-                            )
-                          }
-                        >
-                          Eliminar
-                        </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleDelete(
+                                  device,
+                                )
+                              }
+                            >
+                              Eliminar
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>

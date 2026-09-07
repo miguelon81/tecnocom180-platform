@@ -8,6 +8,13 @@ import {
 
 const sitesRouter = Router();
 
+function isGlobalRole(req: AuthenticatedRequest) {
+  return (
+    req.user?.role === "SUPER_ADMIN" ||
+    req.user?.role === "OPERATIONS"
+  );
+}
+
 function canAccessOrganization(
   req: AuthenticatedRequest,
   organizationId: string,
@@ -16,13 +23,93 @@ function canAccessOrganization(
     return false;
   }
 
-  if (req.user.role === "SUPER_ADMIN") {
+  if (isGlobalRole(req)) {
     return true;
   }
 
   return req.user.organizationId === organizationId;
 }
 
+function requiresSiteAssignment(req: AuthenticatedRequest) {
+  return (
+    req.user?.role === "RECEPTION" ||
+    req.user?.role === "TECHNICIAN"
+  );
+}
+
+async function canAccessSite(
+  req: AuthenticatedRequest,
+  siteId: string,
+) {
+  if (!req.user) {
+    return false;
+  }
+
+  if (isGlobalRole(req)) {
+    return true;
+  }
+
+  const site = await prisma.site.findUnique({
+    where: {
+      id: siteId,
+    },
+    select: {
+      id: true,
+      organizationId: true,
+    },
+  });
+
+  if (!site) {
+    return false;
+  }
+
+  if (site.organizationId !== req.user.organizationId) {
+    return false;
+  }
+
+  if (req.user.role === "ORG_ADMIN") {
+    return true;
+  }
+
+  if (requiresSiteAssignment(req)) {
+    const assignment = await prisma.userSite.findUnique({
+      where: {
+        userId_siteId: {
+          userId: req.user.userId,
+          siteId,
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    return Boolean(assignment);
+  }
+
+  return false;
+}
+
+async function getAccessibleSiteIds(
+  req: AuthenticatedRequest,
+) {
+  if (!req.user || !requiresSiteAssignment(req)) {
+    return null;
+  }
+
+  const assignments = await prisma.userSite.findMany({
+    where: {
+      userId: req.user.userId,
+    },
+    select: {
+      siteId: true,
+    },
+  });
+
+  return assignments.map(
+    (assignment) => assignment.siteId,
+  );
+}
 
 const siteInclude = {
   organization: true,
@@ -45,18 +132,28 @@ sitesRouter.get(
   authenticateToken,
   requireRole(
     "SUPER_ADMIN",
+    "OPERATIONS",
     "ORG_ADMIN",
     "RECEPTION",
     "TECHNICIAN",
   ),
   async (req: AuthenticatedRequest, res) => {
     try {
-      const where =
-        req.user!.role === "SUPER_ADMIN"
-          ? {}
-          : {
-              organizationId: req.user!.organizationId,
-            };
+      const accessibleSiteIds =
+  await getAccessibleSiteIds(req);
+
+const where = isGlobalRole(req)
+  ? {}
+  : req.user!.role === "ORG_ADMIN"
+    ? {
+        organizationId: req.user!.organizationId,
+      }
+    : {
+        organizationId: req.user!.organizationId,
+        id: {
+          in: accessibleSiteIds ?? [],
+        },
+      };
 
       const sites = await prisma.site.findMany({
         where,
@@ -83,6 +180,7 @@ sitesRouter.get(
   authenticateToken,
   requireRole(
     "SUPER_ADMIN",
+    "OPERATIONS",
     "ORG_ADMIN",
     "RECEPTION",
     "TECHNICIAN",
@@ -106,12 +204,11 @@ sitesRouter.get(
         });
       }
 
-      if (!canAccessOrganization(req, site.organizationId)) {
-        return res.status(403).json({
-          error: "Access denied for this organization",
-        });
-      }
-
+      if (!(await canAccessSite(req, site.id))) {
+  return res.status(403).json({
+    error: "Access denied for this site",
+  });
+}
       res.json(site);
     } catch (error) {
       console.error("Error fetching site:", error);
