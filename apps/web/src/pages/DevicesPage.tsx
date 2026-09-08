@@ -155,6 +155,12 @@ function DevicesPage() {
   const [telemetryError, setTelemetryError] =
     useState<string | null>(null)
 
+const [iotTelemetry, setIotTelemetry] =
+  useState<Record<string, DeviceTelemetry | null>>({})
+
+const [iotTelemetryLoading, setIotTelemetryLoading] =
+  useState<Record<string, boolean>>({})
+
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
@@ -349,6 +355,77 @@ function DevicesPage() {
     selectedSiteId,
     selectedAreaId,
   ])
+
+
+function isIotDevice(device: Device) {
+  return device.model?.type === 'IOT'
+}
+
+useEffect(() => {
+  let cancelled = false
+
+  async function loadLatestIotTelemetry() {
+    const iotDevices = devices.filter(isIotDevice)
+
+    if (iotDevices.length === 0) {
+      if (!cancelled) {
+        setIotTelemetry({})
+        setIotTelemetryLoading({})
+      }
+      return
+    }
+
+    for (const device of iotDevices) {
+      try {
+        setIotTelemetryLoading((current) => ({
+          ...current,
+          [device.id]: true,
+        }))
+
+        const latest =
+          await getLatestTelemetry(device.id)
+
+        if (!cancelled) {
+          setIotTelemetry((current) => ({
+            ...current,
+            [device.id]:
+              latest.telemetry ?? null,
+          }))
+        }
+      } catch (err) {
+        console.error(
+          `Error cargando telemetría IoT ${device.id}:`,
+          err,
+        )
+
+        if (!cancelled) {
+          setIotTelemetry((current) => ({
+            ...current,
+            [device.id]: null,
+          }))
+        }
+      } finally {
+        if (!cancelled) {
+          setIotTelemetryLoading((current) => ({
+            ...current,
+            [device.id]: false,
+          }))
+        }
+      }
+    }
+  }
+
+  loadLatestIotTelemetry()
+
+  const interval = window.setInterval(() => {
+    loadLatestIotTelemetry()
+  }, 10000)
+
+  return () => {
+    cancelled = true
+    window.clearInterval(interval)
+  }
+}, [devices])
 
   async function refreshTelemetry(
     deviceId: string,
@@ -787,6 +864,87 @@ function DevicesPage() {
           `${point.x},${point.y}`,
       )
       .join(' ')
+function getDeviceTitle(device: Device) {
+  return (
+    device.name ||
+    device.hostname ||
+    device.deviceCode ||
+    device.serial ||
+    'Dispositivo'
+  )
+}
+
+function getDeviceModel(device: Device) {
+  const brand =
+    device.model?.brand?.name
+
+  const model =
+    device.model?.name
+
+  if (brand && model) {
+    return `${brand} ${model}`
+  }
+
+  return model || brand || 'Sin modelo'
+}
+
+function getSignalLabel(
+  value: number | null | undefined,
+) {
+  if (value === null || value === undefined) {
+    return 'Sin datos'
+  }
+
+  if (value >= -50) {
+    return 'Excelente'
+  }
+
+  if (value >= -67) {
+    return 'Buena'
+  }
+
+  if (value >= -75) {
+    return 'Regular'
+  }
+
+  return 'Débil'
+}
+
+function getBatteryLabel(
+  value: number | null | undefined,
+) {
+  if (value === null || value === undefined) {
+    return 'Sin datos'
+  }
+
+  if (value <= 20) {
+    return 'Baja'
+  }
+
+  if (value <= 50) {
+    return 'Media'
+  }
+
+  return 'Buena'
+}
+
+function getLevelClass(
+  value: number | null | undefined,
+) {
+  if (value === null || value === undefined) {
+    return 'device-tank-empty'
+  }
+
+  if (value <= 23) {
+    return 'device-tank-critical'
+  }
+
+  if (value <= 31) {
+    return 'device-tank-warning'
+  }
+
+  return 'device-tank-normal'
+}
 
   return (
     <div className="page">
@@ -1669,182 +1827,368 @@ function DevicesPage() {
           </p>
         </section>
       ) : (
-        <div className="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th>
-                  Dispositivo
-                </th>
+       <div className="devices-grid">
+  {devices.map((device) => {
+    const isIot =
+      isIotDevice(device)
 
-                <th>
-                  Código
-                </th>
+    const telemetry =
+      iotTelemetry[device.id]
 
-                <th>
-                  Modelo
-                </th>
+    const telemetryIsLoading =
+      iotTelemetryLoading[device.id]
 
-                <th>
-                  Tipo
-                </th>
+    if (isIot) {
+      const level =
+        telemetry?.nivel ?? null
 
-                <th>
-                  Sitio
-                </th>
+      const safeLevel =
+        level === null
+          ? 0
+          : Math.max(
+              0,
+              Math.min(100, level),
+            )
 
-                <th>
-                  Área
-                </th>
+      return (
+        <article
+          key={device.id}
+          className="device-card device-card-iot"
+        >
+          <div className="device-card-header">
+            <div>
+              <div className="device-type-label">
+                IoT · Sensor
+              </div>
 
-                <th>
-                  IP
-                </th>
+              <h2>
+                {getDeviceTitle(device)}
+              </h2>
 
-                <th>
-                  Estado
-                </th>
+              <p>
+                {device.deviceCode ?? 'Sin código'}
+              </p>
+            </div>
 
-                <th>
-                  Última conexión
-                </th>
+            <span
+              className={
+                device.online
+                  ? 'device-online-badge device-online'
+                  : 'device-online-badge device-offline'
+              }
+            >
+              <span />
+              {device.online
+                ? 'Online'
+                : 'Offline'}
+            </span>
+          </div>
 
-                <th>
-                  Acciones
-                </th>
-              </tr>
-            </thead>
+          <div className="device-location">
+            <span>
+              {device.site?.name ?? 'Sin sitio'}
+            </span>
 
-            <tbody>
-              {devices.map(
-                (device) => (
-                  <tr
-                    key={device.id}
+            <strong>·</strong>
+
+            <span>
+              {device.area?.name ?? 'Sin área'}
+            </span>
+          </div>
+
+          {telemetryIsLoading ? (
+            <div className="device-widget-loading">
+              Consultando sensor...
+            </div>
+          ) : telemetry ? (
+            <>
+              <div className="device-iot-main">
+                <div className="device-tank-wrap">
+                  <div
+                    className={`device-tank ${getLevelClass(
+                      level,
+                    )}`}
                   >
-                    <td>
+                    <div
+                      className="device-tank-liquid"
+                      style={{
+                        height: `${safeLevel}%`,
+                      }}
+                    />
+
+                    <div className="device-tank-value">
                       <strong>
-                        {device.name ||
-                          device.hostname ||
-                          device.serial ||
-                          device.deviceCode ||
-                          device.id}
+                        {formatNumber(
+                          level,
+                          '%',
+                        )}
                       </strong>
 
-                      {device.name &&
-                        device.hostname && (
-                          <div
-                            style={{
-                              opacity: 0.65,
-                              fontSize: '0.85rem',
-                              marginTop: '4px',
-                            }}
-                          >
-                            {device.hostname}
-                          </div>
-                        )}
-                    </td>
+                      <span>Nivel</span>
+                    </div>
+                  </div>
+                </div>
 
-                    <td>
-                      {device.deviceCode ??
-                        '—'}
-                    </td>
+                <div className="device-iot-summary">
+                  <span>
+                    Nivel actual
+                  </span>
 
-                    <td>
-                      {device.model
-                        ? `${device.model.brand?.name ?? ''} ${device.model.name}`
-                        : '—'}
-                    </td>
+                  <strong>
+                    {formatNumber(
+                      level,
+                      '%',
+                    )}
+                  </strong>
 
-                    <td>
-                      {device.model
-                        ?.type ??
-                        '—'}
-                    </td>
+                  <small>
+                    Última lectura:{' '}
+                    {formatTelemetryDate(
+                      telemetry.createdAt,
+                    )}
+                  </small>
+                </div>
+              </div>
 
-                    <td>
-                      {device.site
-                        ?.name ??
-                        '—'}
-                    </td>
+              <div className="device-metrics-grid">
+                <div className="device-metric">
+                  <span className="device-metric-icon">
+                    🔋
+                  </span>
 
-                    <td>
-                      {device.area
-                        ?.name ??
-                        'Sin área'}
-                    </td>
+                  <div>
+                    <span>Batería</span>
 
-                    <td>
-                      {device.ip ??
-                        '—'}
-                    </td>
-
-                    <td>
-                      {device.online
-                        ? 'Online'
-                        : 'Offline'}
-                    </td>
-
-                    <td>
-                      {formatDate(
-                        device.lastSeenAt,
+                    <strong>
+                      {formatNumber(
+                        telemetry.bateria,
+                        '%',
                       )}
-                    </td>
+                    </strong>
 
-                    <td>
-                      <div
-                        style={{
-                          display:
-                            'flex',
-                          gap: '8px',
-                          flexWrap:
-                            'wrap',
-                        }}
-                      >
-                        <button
-                          type="button"
-                          onClick={() =>
-                            loadLatestTelemetry(
-                              device.id,
-                            )
-                          }
-                        >
-                          Telemetría
-                        </button>
+                    <small>
+                      {getBatteryLabel(
+                        telemetry.bateria,
+                      )}
+                    </small>
+                  </div>
+                </div>
 
-                        {canManageDevices && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                openEditForm(
-                                  device,
-                                )
-                              }
-                            >
-                              Editar
-                            </button>
+                <div className="device-metric">
+                  <span className="device-metric-icon">
+                    📶
+                  </span>
 
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleDelete(
-                                  device,
-                                )
-                              }
-                            >
-                              Eliminar
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ),
-              )}
-            </tbody>
-          </table>
+                  <div>
+                    <span>Señal</span>
+
+                    <strong>
+                      {formatNumber(
+                        telemetry.senal,
+                        ' dBm',
+                      )}
+                    </strong>
+
+                    <small>
+                      {getSignalLabel(
+                        telemetry.senal,
+                      )}
+                    </small>
+                  </div>
+                </div>
+
+                <div className="device-metric">
+                  <span className="device-metric-icon">
+                    ↗
+                  </span>
+
+                  <div>
+                    <span>Recarga</span>
+
+                    <strong>
+                      {formatNumber(
+                        telemetry.recarga,
+                        '%',
+                      )}
+                    </strong>
+                  </div>
+                </div>
+
+                <div className="device-metric">
+                  <span className="device-metric-icon">
+                    ↘
+                  </span>
+
+                  <div>
+                    <span>Consumo</span>
+
+                    <strong>
+                      {formatNumber(
+                        telemetry.consumo,
+                        '%',
+                      )}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="device-widget-loading">
+              Este dispositivo todavía no tiene
+              telemetría registrada.
+            </div>
+          )}
+
+          <div className="device-card-actions">
+            <button
+              type="button"
+              onClick={() =>
+                loadLatestTelemetry(
+                  device.id,
+                )
+              }
+            >
+              Telemetría
+            </button>
+
+            {canManageDevices && (
+              <>
+                <button
+                  type="button"
+                  onClick={() =>
+                    openEditForm(device)
+                  }
+                >
+                  Editar
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleDelete(device)
+                  }
+                >
+                  Eliminar
+                </button>
+              </>
+            )}
+          </div>
+        </article>
+      )
+    }
+
+    return (
+      <article
+        key={device.id}
+        className="device-card"
+      >
+        <div className="device-card-header">
+          <div>
+            <div className="device-type-label">
+              {device.model?.type ??
+                'DISPOSITIVO'}
+            </div>
+
+            <h2>
+              {getDeviceTitle(device)}
+            </h2>
+
+            <p>
+              {device.deviceCode ??
+                'Sin código'}
+            </p>
+          </div>
+
+          <span
+            className={
+              device.online
+                ? 'device-online-badge device-online'
+                : 'device-online-badge device-offline'
+            }
+          >
+            <span />
+            {device.online
+              ? 'Online'
+              : 'Offline'}
+          </span>
         </div>
-      )}
+
+        <div className="device-location">
+          <span>
+            {device.site?.name ?? 'Sin sitio'}
+          </span>
+
+          <strong>·</strong>
+
+          <span>
+            {device.area?.name ?? 'Sin área'}
+          </span>
+        </div>
+
+        <div className="device-inventory">
+          <div>
+            <span>Modelo</span>
+
+            <strong>
+              {getDeviceModel(device)}
+            </strong>
+          </div>
+
+          <div>
+            <span>IP</span>
+
+            <strong>
+              {device.ip ?? '—'}
+            </strong>
+          </div>
+
+          <div>
+            <span>Hostname</span>
+
+            <strong>
+              {device.hostname ?? '—'}
+            </strong>
+          </div>
+
+          <div>
+            <span>Última conexión</span>
+
+            <strong>
+              {formatDate(
+                device.lastSeenAt,
+              )}
+            </strong>
+          </div>
+        </div>
+
+        <div className="device-card-actions">
+          {canManageDevices && (
+            <>
+              <button
+                type="button"
+                onClick={() =>
+                  openEditForm(device)
+                }
+              >
+                Editar
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  handleDelete(device)
+                }
+              >
+                Eliminar
+              </button>
+            </>
+          )}
+        </div>
+      </article>
+    )
+  })}
+</div>
+)}
     </div>
   )
 }

@@ -705,30 +705,21 @@ export default function GuestsPage() {
         ),
     )
 
-    const checkedInActive =
-      validStays
-        .filter((stay) => {
-          if (stay.status !== 'CHECKED_IN') {
-            return false
-          }
+const checkedInActive =
+  validStays
+    .filter(
+      (stay: Stay) =>
+        stay.status === 'CHECKED_IN',
+    )
+    .sort(
+      (a: Stay, b: Stay) =>
+        new Date(b.checkIn).getTime() -
+        new Date(a.checkIn).getTime(),
+    )[0]
 
-          const start =
-            new Date(stay.checkIn).getTime()
-          const end =
-            new Date(stay.checkOut).getTime()
-
-          return now >= start && now < end
-        })
-        .sort(
-          (a, b) =>
-            new Date(b.checkIn).getTime() -
-            new Date(a.checkIn).getTime(),
-        )[0]
-
-    if (checkedInActive) {
-      return checkedInActive
-    }
-
+if (checkedInActive) {
+  return checkedInActive
+}
     const reservedActive =
       validStays
         .filter((stay) => {
@@ -775,6 +766,23 @@ export default function GuestsPage() {
         new Date(a.checkOut).getTime(),
     )[0]
   }
+
+function isStayCheckoutOverdue(
+  stay: Stay,
+) {
+  if (stay.status !== 'CHECKED_IN') {
+    return false
+  }
+
+  const scheduledCheckOut =
+    new Date(stay.checkOut).getTime()
+
+  if (Number.isNaN(scheduledCheckOut)) {
+    return false
+  }
+
+  return Date.now() > scheduledCheckOut
+}
 
   const currentStaysMap = useMemo(() => {
     const map =
@@ -1655,49 +1663,53 @@ export default function GuestsPage() {
                             )}
                           </td>
 
-                          <td>
-                            <span
-                              className={`guest-status guest-status-${stay.status.toLowerCase()}`}
-                            >
-                              {stayStatusLabel(
-                                stay.status,
-                              )}
-                            </span>
+                         <td>
+  <span
+    className={`guest-status guest-status-${stay.status.toLowerCase()}`}
+  >
+    {stayStatusLabel(stay.status)}
+  </span>
 
-                            {stay.actualCheckIn && (
-                              <div className="guest-tertiary">
-                                Real:{' '}
-                                {formatDate(
-                                  stay.actualCheckIn,
-                                )}
-                              </div>
-                            )}
-                          </td>
+  {isStayCheckoutOverdue(stay) && (
+    <div className="guest-checkout-overdue">
+      ⚠ Salida vencida
+    </div>
+  )}
 
-                          <td className="guest-date-cell">
-                            <strong>
-                              {formatShortDate(
-                                stay.checkIn,
-                              )}
-                            </strong>
+  {stay.actualCheckIn && (
+    <div className="guest-tertiary">
+      Entrada real:{' '}
+      {formatDate(stay.actualCheckIn)}
+    </div>
+  )}
+</td>
 
-                            <small>
-                              {HOTEL_CHECK_IN_TIME}
-                            </small>
-                          </td>
+<td className="guest-date-cell">
+  <strong>
+    {formatShortDate(stay.checkIn)}
+  </strong>
 
-                          <td className="guest-date-cell">
-                            <strong>
-                              {formatShortDate(
-                                stay.checkOut,
-                              )}
-                            </strong>
+  <small>
+    {HOTEL_CHECK_IN_TIME}
+  </small>
+</td>
 
-                            <small>
-                              {HOTEL_CHECK_OUT_TIME}
-                            </small>
-                          </td>
+<td className="guest-date-cell">
+  <strong>
+    {formatShortDate(stay.checkOut)}
+  </strong>
 
+  <small>
+    {HOTEL_CHECK_OUT_TIME}
+  </small>
+
+  {stay.actualCheckOut && (
+    <div className="guest-tertiary">
+      Salida real:{' '}
+      {formatDate(stay.actualCheckOut)}
+    </div>
+  )}
+</td>
                           <td>
                             {renderWifiActions(
                               guest,
