@@ -45,11 +45,15 @@ function OrganizationsPage() {
   const [saving, setSaving] = useState(false)
 
   const [error, setError] = useState<string | null>(null)
-  const [formError, setFormError] = useState<string | null>(null)
+  const [formError, setFormError] =
+    useState<string | null>(null)
 
   const [showForm, setShowForm] = useState(false)
-  const [editingOrganization, setEditingOrganization] =
-    useState<Organization | null>(null)
+
+  const [
+    editingOrganization,
+    setEditingOrganization,
+  ] = useState<Organization | null>(null)
 
   const [form, setForm] =
     useState<OrganizationForm>(emptyForm)
@@ -66,9 +70,10 @@ function OrganizationsPage() {
       }
 
       if (isOrgAdmin && user?.organizationId) {
-        const organization = await getOrganization(
-          user.organizationId,
-        )
+        const organization =
+          await getOrganization(
+            user.organizationId,
+          )
 
         setOrganizations([organization])
         return
@@ -90,7 +95,11 @@ function OrganizationsPage() {
 
   useEffect(() => {
     void loadOrganizations()
-  }, [isSuperAdmin, isOrgAdmin, user?.organizationId])
+  }, [
+    isSuperAdmin,
+    isOrgAdmin,
+    user?.organizationId,
+  ])
 
   function openCreateForm() {
     setEditingOrganization(null)
@@ -164,7 +173,9 @@ function OrganizationsPage() {
 
       const data = {
         name: form.name.trim(),
-        slug: form.slug.trim().toLowerCase(),
+        slug: form.slug
+          .trim()
+          .toLowerCase(),
         phone: form.phone.trim() || null,
         email: form.email.trim() || null,
         timezone:
@@ -172,42 +183,34 @@ function OrganizationsPage() {
           'America/Mexico_City',
       }
 
-if (editingOrganization) {
-  const updated =
-    await updateOrganization(
-      editingOrganization.id,
-      data,
-    )
+      if (editingOrganization) {
+        const updated =
+          await updateOrganization(
+            editingOrganization.id,
+            data,
+          )
 
-  setOrganizations((current) =>
-    current.map((organization) =>
-      organization.id === updated.id
-        ? updated
-        : organization,
-    ),
-  )
-} else {
-  const created =
-    await createOrganization(data)
+        setOrganizations((current) =>
+          current.map((organization) =>
+            organization.id === updated.id
+              ? updated
+              : organization,
+          ),
+        )
+      } else {
+        const created =
+          await createOrganization(data)
 
-  setOrganizations((current) =>
-    [...current, created].sort((a, b) =>
-      a.name.localeCompare(b.name),
-    ),
-  )
-}
+        setOrganizations((current) =>
+          [...current, created].sort(
+            (a, b) =>
+              a.name.localeCompare(b.name),
+          ),
+        )
+      }
 
-/*
- * Sincronizar el contexto global.
- *
- * Esto actualiza nombres, organizaciones
- * disponibles y sitios en el resto
- * de la aplicación.
- */
-await refreshSites()
-
-closeForm()   
-
+      await refreshSites()
+      closeForm()
     } catch (err) {
       console.error(err)
 
@@ -231,7 +234,8 @@ closeForm()
         await updateOrganization(
           organization.id,
           {
-            active: !organization.active,
+            active:
+              !organization.active,
           },
         )
 
@@ -242,7 +246,8 @@ closeForm()
             : item,
         ),
       )
-await refreshSites()
+
+      await refreshSites()
     } catch (err) {
       console.error(err)
 
@@ -278,7 +283,8 @@ await refreshSites()
             item.id !== organization.id,
         ),
       )
-await refreshSites()
+
+      await refreshSites()
     } catch (err) {
       console.error(err)
 
@@ -292,188 +298,194 @@ await refreshSites()
 
   if (!isSuperAdmin && !isOrgAdmin) {
     return (
-      <main className="page">
-        <section className="card">
-          <h2>Acceso no permitido</h2>
-          <p>
+      <main className="organizations-page">
+        <section className="organizations-empty">
+          <strong>
+            Acceso no permitido
+          </strong>
+
+          <span>
             No tienes permisos para administrar
             organizaciones.
-          </p>
+          </span>
         </section>
       </main>
     )
   }
 
   return (
-    <main className="page">
-      <header className="page-header">
+    <main className="organizations-page">
+      <section className="organizations-header">
         <div>
-          <p className="eyebrow">
-            TECNOCOM180 PLATFORM
-          </p>
+          <div className="organizations-eyebrow">
+            Administración
+          </div>
 
           <h1>Organizaciones</h1>
 
-          <p className="subtitle">
+          <p>
             {isSuperAdmin
-              ? 'Administración de organizaciones y clientes.'
-              : 'Información de tu organización.'}
+              ? 'Administra clientes, organizaciones y sus ubicaciones.'
+              : 'Consulta y administra la información de tu organización.'}
           </p>
         </div>
 
-        <div className="site-count">
-          {organizations.length}{' '}
-          {organizations.length === 1
-            ? 'organización'
-            : 'organizaciones'}
+        <div className="organizations-header-actions">
+          <span className="organization-count">
+            {organizations.length}{' '}
+            {organizations.length === 1
+              ? 'organización'
+              : 'organizaciones'}
+          </span>
+
+          {isSuperAdmin && (
+            <button
+              type="button"
+              onClick={openCreateForm}
+              className="organizations-primary-button"
+            >
+              + Nueva organización
+            </button>
+          )}
         </div>
-      </header>
+      </section>
 
       {error && (
-        <div className="error-message">
+        <div className="organizations-error">
           {error}
         </div>
       )}
 
-      {isSuperAdmin && (
-        <section
-          className="card"
-          style={{
-            marginBottom: '24px',
-          }}
-        >
-          <button
-            type="button"
-            onClick={openCreateForm}
-          >
-            + Nueva organización
-          </button>
-        </section>
-      )}
-
       {showForm && (
-        <section
-          className="card"
-          style={{
-            marginBottom: '24px',
-          }}
-        >
-          <p className="eyebrow">
-            {editingOrganization
-              ? 'EDITAR ORGANIZACIÓN'
-              : 'NUEVA ORGANIZACIÓN'}
-          </p>
+        <section className="organization-form-panel">
+          <div className="organization-form-header">
+            <div>
+              <div className="organizations-eyebrow">
+                {editingOrganization
+                  ? 'Configuración'
+                  : 'Nuevo cliente'}
+              </div>
 
-          <h2>
-            {editingOrganization
-              ? editingOrganization.name
-              : 'Registrar organización'}
-          </h2>
+              <h2>
+                {editingOrganization
+                  ? `Editar ${editingOrganization.name}`
+                  : 'Registrar organización'}
+              </h2>
+
+              <p>
+                {editingOrganization
+                  ? 'Actualiza los datos generales de la organización.'
+                  : 'Registra una nueva organización dentro de TECNOCOM180.'}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={closeForm}
+              disabled={saving}
+              className="organization-form-close"
+            >
+              Cerrar
+            </button>
+          </div>
 
           {formError && (
-            <div className="error-message">
+            <div className="organizations-error">
               {formError}
             </div>
           )}
 
-          <form onSubmit={handleSubmit}>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns:
-                  'repeat(auto-fit, minmax(220px, 1fr))',
-                gap: '16px',
-              }}
-            >
-              <label>
-                Nombre
+          <form
+            onSubmit={handleSubmit}
+            className="organization-form-grid"
+          >
+            <label className="organization-form-field">
+              <span>Nombre</span>
 
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={(event) =>
-                    handleChange(
-                      'name',
-                      event.target.value,
-                    )
-                  }
-                  placeholder="Hotel Ejemplo"
-                />
-              </label>
+              <input
+                type="text"
+                value={form.name}
+                onChange={(event) =>
+                  handleChange(
+                    'name',
+                    event.target.value,
+                  )
+                }
+                placeholder="Hotel Ejemplo"
+                required
+              />
+            </label>
 
-              <label>
-                Slug
+            <label className="organization-form-field">
+              <span>Slug</span>
 
-                <input
-                  type="text"
-                  value={form.slug}
-                  onChange={(event) =>
-                    handleChange(
-                      'slug',
-                      event.target.value,
-                    )
-                  }
-                  placeholder="hotel-ejemplo"
-                />
-              </label>
+              <input
+                type="text"
+                value={form.slug}
+                onChange={(event) =>
+                  handleChange(
+                    'slug',
+                    event.target.value,
+                  )
+                }
+                placeholder="hotel-ejemplo"
+                required
+              />
+            </label>
 
-              <label>
-                Teléfono
+            <label className="organization-form-field">
+              <span>Teléfono</span>
 
-                <input
-                  type="text"
-                  value={form.phone}
-                  onChange={(event) =>
-                    handleChange(
-                      'phone',
-                      event.target.value,
-                    )
-                  }
-                />
-              </label>
+              <input
+                type="text"
+                value={form.phone}
+                onChange={(event) =>
+                  handleChange(
+                    'phone',
+                    event.target.value,
+                  )
+                }
+                placeholder="222 000 0000"
+              />
+            </label>
 
-              <label>
-                Email
+            <label className="organization-form-field">
+              <span>Email</span>
 
-                <input
-                  type="email"
-                  value={form.email}
-                  onChange={(event) =>
-                    handleChange(
-                      'email',
-                      event.target.value,
-                    )
-                  }
-                />
-              </label>
+              <input
+                type="email"
+                value={form.email}
+                onChange={(event) =>
+                  handleChange(
+                    'email',
+                    event.target.value,
+                  )
+                }
+                placeholder="contacto@hotel.com"
+              />
+            </label>
 
-              <label>
-                Zona horaria
+            <label className="organization-form-field organization-form-full">
+              <span>Zona horaria</span>
 
-                <input
-                  type="text"
-                  value={form.timezone}
-                  onChange={(event) =>
-                    handleChange(
-                      'timezone',
-                      event.target.value,
-                    )
-                  }
-                  placeholder="America/Mexico_City"
-                />
-              </label>
-            </div>
+              <input
+                type="text"
+                value={form.timezone}
+                onChange={(event) =>
+                  handleChange(
+                    'timezone',
+                    event.target.value,
+                  )
+                }
+                placeholder="America/Mexico_City"
+              />
+            </label>
 
-            <div
-              style={{
-                display: 'flex',
-                gap: '12px',
-                marginTop: '20px',
-              }}
-            >
+            <div className="organization-form-actions organization-form-full">
               <button
                 type="submit"
                 disabled={saving}
+                className="organizations-primary-button"
               >
                 {saving
                   ? 'Guardando...'
@@ -486,6 +498,7 @@ await refreshSites()
                 type="button"
                 disabled={saving}
                 onClick={closeForm}
+                className="organization-secondary-button"
               >
                 Cancelar
               </button>
@@ -495,119 +508,158 @@ await refreshSites()
       )}
 
       {loading ? (
-        <p>Cargando organizaciones...</p>
-      ) : organizations.length === 0 ? (
-        <section className="card">
-          <h2>No hay organizaciones</h2>
+        <section className="organizations-empty">
+          <strong>
+            Cargando organizaciones...
+          </strong>
 
-          <p>
+          <span>
+            Obteniendo información de la plataforma.
+          </span>
+        </section>
+      ) : organizations.length === 0 ? (
+        <section className="organizations-empty">
+          <strong>
+            No hay organizaciones
+          </strong>
+
+          <span>
             {isSuperAdmin
               ? 'Todavía no existen organizaciones registradas.'
               : 'No se encontró tu organización.'}
-          </p>
+          </span>
         </section>
       ) : (
-        <div className="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th>Organización</th>
-                <th>Slug</th>
-                <th>Contacto</th>
-                <th>Sitios</th>
-                <th>Estado</th>
-                <th>Acciones</th>
-              </tr>
-            </thead>
+        <div className="organizations-grid">
+          {organizations.map(
+            (organization) => {
+              const siteCount =
+                organization.sites?.length ??
+                0
 
-            <tbody>
-              {organizations.map(
-                (organization) => (
-                  <tr key={organization.id}>
-                    <td>
-                      <strong>
+              return (
+                <article
+                  key={organization.id}
+                  className={`organization-card ${
+                    organization.active
+                      ? ''
+                      : 'organization-card-inactive'
+                  }`}
+                >
+                  <div className="organization-card-header">
+                    <div>
+                      <div className="organization-slug">
+                        {organization.slug}
+                      </div>
+
+                      <h2>
                         {organization.name}
-                      </strong>
-                    </td>
+                      </h2>
+                    </div>
 
-                    <td>
-                      {organization.slug}
-                    </td>
+                    <span
+                      className={`organization-status ${
+                        organization.active
+                          ? 'organization-status-active'
+                          : 'organization-status-inactive'
+                      }`}
+                    >
+                      <span className="organization-status-dot" />
 
-                    <td>
-                      <div>
-                        {organization.email ??
-                          '—'}
-                      </div>
-
-                      <div>
-                        {organization.phone ??
-                          '—'}
-                      </div>
-                    </td>
-
-                    <td>
-                      {organization.sites
-                        ?.length ?? 0}
-                    </td>
-
-                    <td>
                       {organization.active
                         ? 'Activa'
                         : 'Inactiva'}
-                    </td>
+                    </span>
+                  </div>
 
-                    <td>
-                      <div
-                        style={{
-                          display: 'flex',
-                          gap: '8px',
-                          flexWrap: 'wrap',
-                        }}
+                  <div className="organization-contact">
+                    <div>
+                      <span>Email</span>
+                      <strong>
+                        {organization.email ??
+                          'No registrado'}
+                      </strong>
+                    </div>
+
+                    <div>
+                      <span>Teléfono</span>
+                      <strong>
+                        {organization.phone ??
+                          'No registrado'}
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div className="organization-summary">
+                    <div>
+                      <strong>
+                        {siteCount}
+                      </strong>
+
+                      <span>
+                        {siteCount === 1
+                          ? 'Sitio'
+                          : 'Sitios'}
+                      </span>
+                    </div>
+
+                    <div>
+                      <strong>
+                        {organization.timezone ??
+                          'America/Mexico_City'}
+                      </strong>
+
+                      <span>
+                        Zona horaria
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="organization-actions">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openEditForm(
+                          organization,
+                        )
+                      }
+                      className="organization-action-button"
+                    >
+                      Editar
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void handleToggleActive(
+                          organization,
+                        )
+                      }
+                      className="organization-action-button"
+                    >
+                      {organization.active
+                        ? 'Desactivar'
+                        : 'Activar'}
+                    </button>
+
+                    {isSuperAdmin && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handleDelete(
+                            organization,
+                          )
+                        }
+                        className="organization-action-button organization-action-danger"
                       >
-                        <button
-                          type="button"
-                          onClick={() =>
-                            openEditForm(
-                              organization,
-                            )
-                          }
-                        >
-                          Editar
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleToggleActive(
-                              organization,
-                            )
-                          }
-                        >
-                          {organization.active
-                            ? 'Desactivar'
-                            : 'Activar'}
-                        </button>
-
-                        {isSuperAdmin && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleDelete(
-                                organization,
-                              )
-                            }
-                          >
-                            Eliminar
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ),
-              )}
-            </tbody>
-          </table>
+                        Eliminar
+                      </button>
+                    )}
+                  </div>
+                </article>
+              )
+            },
+          )}
         </div>
       )}
     </main>
