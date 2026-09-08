@@ -408,416 +408,466 @@ await refreshSites()
     return organization?.name ?? site.organizationId
   }
 
-  if (loading) {
+   if (loading) {
     return (
-      <div className="p-6">
-        <h1 className="text-2xl font-semibold">
-          Sitios
-        </h1>
+      <main className="sites-page">
+        <section className="sites-loading">
+          <div className="sites-page-eyebrow">
+            Infraestructura
+          </div>
 
-        <p className="mt-4 text-gray-600">
-          Cargando sitios...
-        </p>
-      </div>
+          <h1>Sitios</h1>
+
+          <p>Cargando sitios...</p>
+        </section>
+      </main>
     )
   }
 
   return (
-    <div className="p-6">
-      <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+    <main className="sites-page">
+      <section className="sites-page-header">
         <div>
-          <h1 className="text-2xl font-semibold">
-            Sitios
-          </h1>
+          <div className="sites-page-eyebrow">
+            Infraestructura
+          </div>
 
-          <p className="mt-1 text-sm text-gray-600">
+          <h1>Sitios</h1>
+
+          <p>
             {isSuperAdmin
-              ? 'Administración de sitios de todas las organizaciones.'
-              : 'Sitios disponibles dentro de tu organización.'}
+              ? 'Administra ubicaciones de todas las organizaciones.'
+              : 'Administra las ubicaciones disponibles dentro de tu organización.'}
           </p>
         </div>
 
-        {canManageSites && (
-          <button
-            type="button"
-            onClick={openCreateForm}
-            className="rounded bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
-          >
-            + Nuevo sitio
-          </button>
-        )}
-      </div>
+        <div className="sites-page-header-actions">
+          <span className="site-count">
+            {visibleSites.length}{' '}
+            {visibleSites.length === 1
+              ? 'sitio'
+              : 'sitios'}
+          </span>
 
-      {error && (
-        <div className="mb-6 rounded border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
+          {canManageSites && (
+            <button
+              type="button"
+              onClick={openCreateForm}
+              className="sites-primary-button"
+            >
+              + Nuevo sitio
+            </button>
+          )}
         </div>
-      )}
+      </section>
 
-      {showForm && canManageSites && (
-        <div className="mb-8 rounded-lg border bg-white p-6 shadow-sm">
-          <div className="mb-6 flex items-center justify-between">
-            <h2 className="text-xl font-semibold">
+
+    {error && (
+      <div className="sites-error">
+        {error}
+      </div>
+    )}
+
+    {showForm && canManageSites && (
+      <section className="site-form-panel">
+        <div className="site-form-header">
+          <div>
+            <div className="site-form-eyebrow">
+              {editingSite
+                ? 'Configuración'
+                : 'Nuevo registro'}
+            </div>
+
+            <h2>
               {editingSite
                 ? 'Editar sitio'
-                : 'Nuevo sitio'}
+                : 'Crear sitio'}
             </h2>
+
+            <p>
+              {editingSite
+                ? 'Actualiza la información operativa de esta ubicación.'
+                : 'Registra una nueva ubicación para comenzar a administrar su infraestructura.'}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={resetForm}
+            className="site-form-close"
+          >
+            Cerrar
+          </button>
+        </div>
+
+        <form
+          onSubmit={handleSubmit}
+          className="site-form-grid"
+        >
+          {isSuperAdmin && !editingSite && (
+            <label className="site-form-field site-form-field-full">
+              <span>Organización</span>
+
+              <select
+                value={form.organizationId}
+                onChange={(event) =>
+                  handleChange(
+                    'organizationId',
+                    event.target.value,
+                  )
+                }
+                disabled={loadingOrganizations}
+                required
+              >
+                <option value="">
+                  {loadingOrganizations
+                    ? 'Cargando organizaciones...'
+                    : 'Selecciona una organización'}
+                </option>
+
+                {organizations
+                  .filter(
+                    (organization) =>
+                      organization.active,
+                  )
+                  .map((organization) => (
+                    <option
+                      key={organization.id}
+                      value={organization.id}
+                    >
+                      {organization.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          )}
+
+          {!isSuperAdmin && (
+            <div className="site-form-context site-form-field-full">
+              <span>Organización</span>
+              <strong>
+                {currentUser?.organizationId}
+              </strong>
+            </div>
+          )}
+
+          {editingSite && (
+            <div className="site-form-context site-form-field-full">
+              <span>Organización</span>
+              <strong>
+                {getOrganizationName(
+                  editingSite,
+                )}
+              </strong>
+            </div>
+          )}
+
+          <label className="site-form-field">
+            <span>Nombre</span>
+
+            <input
+              type="text"
+              value={form.name}
+              onChange={(event) =>
+                handleChange(
+                  'name',
+                  event.target.value,
+                )
+              }
+              placeholder="Hotel TECNOCOM180"
+              required
+            />
+          </label>
+
+          <label className="site-form-field">
+            <span>Código</span>
+
+            <input
+              type="text"
+              value={form.code}
+              onChange={(event) =>
+                handleChange(
+                  'code',
+                  event.target.value,
+                )
+              }
+              placeholder="HOTEL-001"
+              required
+            />
+          </label>
+
+          <label className="site-form-field site-form-field-full">
+            <span>Dirección</span>
+
+            <input
+              type="text"
+              value={form.address}
+              onChange={(event) =>
+                handleChange(
+                  'address',
+                  event.target.value,
+                )
+              }
+              placeholder="Dirección del sitio"
+            />
+          </label>
+
+          <label className="site-form-field">
+            <span>Ciudad</span>
+
+            <input
+              type="text"
+              value={form.city}
+              onChange={(event) =>
+                handleChange(
+                  'city',
+                  event.target.value,
+                )
+              }
+              placeholder="Puebla"
+            />
+          </label>
+
+          <label className="site-form-field">
+            <span>Estado</span>
+
+            <input
+              type="text"
+              value={form.state}
+              onChange={(event) =>
+                handleChange(
+                  'state',
+                  event.target.value,
+                )
+              }
+              placeholder="Puebla"
+            />
+          </label>
+
+          <label className="site-form-field">
+            <span>País</span>
+
+            <input
+              type="text"
+              value={form.country}
+              onChange={(event) =>
+                handleChange(
+                  'country',
+                  event.target.value,
+                )
+              }
+              placeholder="México"
+            />
+          </label>
+
+          <label className="site-form-toggle">
+            <input
+              type="checkbox"
+              checked={form.active}
+              onChange={(event) =>
+                handleChange(
+                  'active',
+                  event.target.checked,
+                )
+              }
+            />
+
+            <span>
+              <strong>Sitio activo</strong>
+              <small>
+                Disponible para operación y asignación.
+              </small>
+            </span>
+          </label>
+
+          <div className="site-form-actions site-form-field-full">
+            <button
+              type="submit"
+              className="sites-primary-button"
+            >
+              {editingSite
+                ? 'Guardar cambios'
+                : 'Crear sitio'}
+            </button>
 
             <button
               type="button"
               onClick={resetForm}
-              className="text-sm text-gray-600 hover:text-gray-900"
+              className="site-form-secondary"
             >
               Cancelar
             </button>
           </div>
+        </form>
+      </section>
+    )}
+  
+{visibleSites.length === 0 ? (
+  <section className="sites-empty">
+    <strong>No hay sitios disponibles</strong>
+    <span>
+      {canManageSites
+        ? 'Crea un sitio para comenzar a administrar su infraestructura.'
+        : 'No tienes sitios asignados actualmente.'}
+    </span>
+  </section>
+) : (
+  <div className="sites-grid">
+    {visibleSites.map((site) => {
+      const onlineDevices =
+        site.devices.filter(
+          (device) => device.online,
+        ).length
 
-          <form
-            onSubmit={handleSubmit}
-            className="grid grid-cols-1 gap-4 md:grid-cols-2"
-          >
-            {isSuperAdmin && !editingSite && (
-              <label className="flex flex-col gap-1 md:col-span-2">
-                <span className="text-sm font-medium">
-                  Organización
-                </span>
+      const offlineDevices =
+        site.devices.length - onlineDevices
 
-                <select
-                  value={form.organizationId}
-                  onChange={(event) =>
-                    handleChange(
-                      'organizationId',
-                      event.target.value,
-                    )
-                  }
-                  disabled={loadingOrganizations}
-                  className="rounded border px-3 py-2"
-                  required
-                >
-                  <option value="">
-                    {loadingOrganizations
-                      ? 'Cargando organizaciones...'
-                      : 'Selecciona una organización'}
-                  </option>
+      const location = [
+        site.city,
+        site.state,
+        site.country,
+      ]
+        .filter(Boolean)
+        .join(' · ')
 
-                  {organizations
-                    .filter((organization) => organization.active)
-                    .map((organization) => (
-                      <option
-                        key={organization.id}
-                        value={organization.id}
-                      >
-                        {organization.name}
-                      </option>
-                    ))}
-                </select>
-              </label>
-            )}
-
-            {!isSuperAdmin && (
-              <div className="rounded bg-gray-50 px-3 py-2 text-sm md:col-span-2">
-                <span className="font-medium">
-                  Organización:
-                </span>{' '}
-                {currentUser?.organizationId}
+      return (
+        <article
+          key={site.id}
+          className={`site-card ${
+            site.active
+              ? ''
+              : 'site-card-inactive'
+          }`}
+        >
+          <div className="site-card-header">
+            <div className="site-card-identity">
+              <div className="site-code">
+                {site.code}
               </div>
-            )}
 
-            {editingSite && (
-              <div className="rounded bg-gray-50 px-3 py-2 text-sm md:col-span-2">
-                <span className="font-medium">
-                  Organización:
-                </span>{' '}
-                {getOrganizationName(editingSite)}
-              </div>
-            )}
+              <h2>{site.name}</h2>
 
-            <label className="flex flex-col gap-1">
-              <span className="text-sm font-medium">
-                Nombre
+              {isSuperAdmin && (
+                <div className="site-organization">
+                  {getOrganizationName(site)}
+                </div>
+              )}
+            </div>
+
+            <span
+              className={`site-status ${
+                site.active
+                  ? 'site-status-active'
+                  : 'site-status-inactive'
+              }`}
+            >
+              <span className="site-status-dot" />
+
+              {site.active
+                ? 'Activo'
+                : 'Inactivo'}
+            </span>
+          </div>
+
+          <div className="site-location">
+            <span className="site-location-icon">
+              ⌖
+            </span>
+
+            <div>
+              {site.address && (
+                <strong>
+                  {site.address}
+                </strong>
+              )}
+
+              <span>
+                {location ||
+                  'Ubicación no registrada'}
               </span>
+            </div>
+          </div>
 
-              <input
-                type="text"
-                value={form.name}
-                onChange={(event) =>
-                  handleChange('name', event.target.value)
-                }
-                className="rounded border px-3 py-2"
-                placeholder="Hotel TECNOCOM180"
-                required
-              />
-            </label>
+          <div className="site-stats">
+            <div>
+              <strong>
+                {site.areas.length}
+              </strong>
+              <span>Áreas</span>
+            </div>
 
-            <label className="flex flex-col gap-1">
-              <span className="text-sm font-medium">
-                Código
-              </span>
+            <div>
+              <strong>
+                {site.rooms.length}
+              </strong>
+              <span>Habitaciones</span>
+            </div>
 
-              <input
-                type="text"
-                value={form.code}
-                onChange={(event) =>
-                  handleChange('code', event.target.value)
-                }
-                className="rounded border px-3 py-2"
-                placeholder="HOTEL-001"
-                required
-              />
-            </label>
+            <div>
+              <strong>
+                {site.devices.length}
+              </strong>
+              <span>Dispositivos</span>
+            </div>
+          </div>
 
-            <label className="flex flex-col gap-1 md:col-span-2">
-              <span className="text-sm font-medium">
-                Dirección
-              </span>
+          <div className="site-device-health">
+            <div>
+              <span className="site-health-dot site-health-online" />
+              <strong>{onlineDevices}</strong>
+              <span>en línea</span>
+            </div>
 
-              <input
-                type="text"
-                value={form.address}
-                onChange={(event) =>
-                  handleChange(
-                    'address',
-                    event.target.value,
-                  )
-                }
-                className="rounded border px-3 py-2"
-                placeholder="Dirección del sitio"
-              />
-            </label>
+            <div>
+              <span className="site-health-dot site-health-offline" />
+              <strong>{offlineDevices}</strong>
+              <span>fuera de línea</span>
+            </div>
+          </div>
 
-            <label className="flex flex-col gap-1">
-              <span className="text-sm font-medium">
-                Ciudad
-              </span>
-
-              <input
-                type="text"
-                value={form.city}
-                onChange={(event) =>
-                  handleChange('city', event.target.value)
-                }
-                className="rounded border px-3 py-2"
-              />
-            </label>
-
-            <label className="flex flex-col gap-1">
-              <span className="text-sm font-medium">
-                Estado
-              </span>
-
-              <input
-                type="text"
-                value={form.state}
-                onChange={(event) =>
-                  handleChange('state', event.target.value)
-                }
-                className="rounded border px-3 py-2"
-              />
-            </label>
-
-            <label className="flex flex-col gap-1">
-              <span className="text-sm font-medium">
-                País
-              </span>
-
-              <input
-                type="text"
-                value={form.country}
-                onChange={(event) =>
-                  handleChange(
-                    'country',
-                    event.target.value,
-                  )
-                }
-                className="rounded border px-3 py-2"
-              />
-            </label>
-
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={form.active}
-                onChange={(event) =>
-                  handleChange(
-                    'active',
-                    event.target.checked,
-                  )
-                }
-              />
-
-              <span className="text-sm font-medium">
-                Sitio activo
-              </span>
-            </label>
-
-            <div className="flex gap-3 md:col-span-2">
+          {canManageSites && (
+            <div className="site-actions">
               <button
-                type="submit"
-                className="rounded bg-blue-600 px-5 py-2 font-medium text-white hover:bg-blue-700"
+                type="button"
+                onClick={() =>
+                  openEditForm(site)
+                }
+                className="site-action-button"
               >
-                {editingSite
-                  ? 'Guardar cambios'
-                  : 'Crear sitio'}
+                Editar
               </button>
 
               <button
                 type="button"
-                onClick={resetForm}
-                className="rounded border px-5 py-2 font-medium hover:bg-gray-50"
+                onClick={() =>
+                  void handleToggleActive(site)
+                }
+                className="site-action-button"
               >
-                Cancelar
+                {site.active
+                  ? 'Desactivar'
+                  : 'Activar'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void handleDelete(site)
+                }
+                className="site-action-button site-action-danger"
+              >
+                Eliminar
               </button>
             </div>
-          </form>
-        </div>
-      )}
-
-      {visibleSites.length === 0 ? (
-        <div className="rounded-lg border bg-white p-8 text-center text-gray-500">
-          No hay sitios disponibles.
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-          {visibleSites.map((site) => {
-            const onlineDevices = site.devices.filter(
-              (device) => device.online,
-            ).length
-
-            const offlineDevices =
-              site.devices.length - onlineDevices
-
-            return (
-              <div
-                key={site.id}
-                className="rounded-lg border bg-white p-6 shadow-sm"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="text-xl font-semibold">
-                      {site.name}
-                    </h2>
-
-                    <p className="mt-1 text-sm text-gray-500">
-                      Código: {site.code}
-                    </p>
-
-                    {isSuperAdmin && (
-                      <p className="mt-1 text-sm text-gray-500">
-                        Organización:{' '}
-                        {getOrganizationName(site)}
-                      </p>
-                    )}
-                  </div>
-
-                  <span
-                    className={`rounded-full px-3 py-1 text-xs font-medium ${
-                      site.active
-                        ? 'bg-green-100 text-green-700'
-                        : 'bg-gray-100 text-gray-600'
-                    }`}
-                  >
-                    {site.active
-                      ? 'Activo'
-                      : 'Inactivo'}
-                  </span>
-                </div>
-
-                <div className="mt-4 space-y-1 text-sm text-gray-600">
-                  {site.address && (
-                    <p>{site.address}</p>
-                  )}
-
-                  {(site.city || site.state) && (
-                    <p>
-                      {[site.city, site.state]
-                        .filter(Boolean)
-                        .join(', ')}
-                    </p>
-                  )}
-
-                  {site.country && (
-                    <p>{site.country}</p>
-                  )}
-                </div>
-
-                <div className="mt-6 grid grid-cols-3 gap-3">
-                  <div className="rounded bg-gray-50 p-3 text-center">
-                    <div className="text-xl font-semibold">
-                      {site.areas.length}
-                    </div>
-
-                    <div className="text-xs text-gray-500">
-                      Áreas
-                    </div>
-                  </div>
-
-                  <div className="rounded bg-gray-50 p-3 text-center">
-                    <div className="text-xl font-semibold">
-                      {site.rooms.length}
-                    </div>
-
-                    <div className="text-xs text-gray-500">
-                      Habitaciones
-                    </div>
-                  </div>
-
-                  <div className="rounded bg-gray-50 p-3 text-center">
-                    <div className="text-xl font-semibold">
-                      {site.devices.length}
-                    </div>
-
-                    <div className="text-xs text-gray-500">
-                      Dispositivos
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-4 flex gap-4 text-sm">
-                  <span className="text-green-700">
-                    {onlineDevices} en línea
-                  </span>
-
-                  <span className="text-gray-500">
-                    {offlineDevices} fuera de línea
-                  </span>
-                </div>
-
-                {canManageSites && (
-                  <div className="mt-6 flex flex-wrap gap-2 border-t pt-4">
-                    <button
-                      type="button"
-                      onClick={() => openEditForm(site)}
-                      className="rounded border px-3 py-2 text-sm hover:bg-gray-50"
-                    >
-                      Editar
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void handleToggleActive(site)
-                      }
-                      className="rounded border px-3 py-2 text-sm hover:bg-gray-50"
-                    >
-                      {site.active
-                        ? 'Desactivar'
-                        : 'Activar'}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => void handleDelete(site)}
-                      className="rounded border border-red-300 px-3 py-2 text-sm text-red-600 hover:bg-red-50"
-                    >
-                      Eliminar
-                    </button>
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
+          )}
+        </article>
+      )
+    })}
+  </div>
+)}
+        
+      
+        </main>
+   )
 }
+    
