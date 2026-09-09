@@ -1,5 +1,6 @@
 ﻿import { useEffect, useState } from 'react'
 import { apiFetch } from '../api/client'
+import { useSites } from '../sites/SiteContext'
 
 type SpeedtestResult = {
   interface: string
@@ -62,6 +63,12 @@ type DiagnosticResult = {
 type Diagnostic = {
   id: string
   organizationId?: string
+  siteId?: string | null
+  site?: {
+    id: string
+    name: string
+    code: string
+  } | null
   status: string
   startedAt: string
   finishedAt?: string | null
@@ -86,12 +93,20 @@ function statusLabel(status: string) {
   switch (status) {
     case 'SUCCESS':
       return 'Correcto'
+
+    case 'PASS':
+      return 'Correcto'
+
     case 'WARNING':
       return 'Advertencia'
+
     case 'FAIL':
+    case 'FAILED':
       return 'Fallo'
+
     case 'RUNNING':
       return 'Ejecutando'
+
     default:
       return status
   }
@@ -100,75 +115,53 @@ function statusLabel(status: string) {
 function statusClass(status: string) {
   switch (status) {
     case 'SUCCESS':
+    case 'PASS':
       return 'status-success'
+
     case 'WARNING':
       return 'status-warning'
+
     case 'FAIL':
+    case 'FAILED':
       return 'status-fail'
+
     case 'RUNNING':
       return 'status-running'
+
     default:
       return ''
   }
 }
 
+function formatDate(value?: string | null) {
+  if (!value) {
+    return '—'
+  }
+
+  return new Date(value).toLocaleString()
+}
+
 function MetricCard({
   label,
   value,
-  unit,
+  detail,
 }: {
   label: string
   value: string
-  unit?: string
+  detail?: string
 }) {
   return (
-    <div className="diagnostic-metric">
-      <span className="diagnostic-metric-label">{label}</span>
+    <div className="diagnostic-detail-metric">
+      <span>{label}</span>
+
       <strong>{value}</strong>
-      {unit && <small>{unit}</small>}
+
+      {detail && <small>{detail}</small>}
     </div>
   )
 }
 
-function Histogram({
-  label,
-  value,
-  max,
-  unit,
-}: {
-  label: string
-  value: number | null | undefined
-  max: number
-  unit: string
-}) {
-  const numericValue =
-    value === null || value === undefined ? 0 : Math.max(0, value)
-
-  const percentage = Math.min((numericValue / max) * 100, 100)
-
-  return (
-    <div className="diagnostic-histogram">
-      <div className="diagnostic-histogram-header">
-        <span>{label}</span>
-
-        <strong>
-          {value === null || value === undefined
-            ? '—'
-            : `${formatNumber(value)} ${unit}`}
-        </strong>
-      </div>
-
-      <div className="diagnostic-histogram-track">
-        <div
-          className="diagnostic-histogram-bar"
-          style={{ width: `${percentage}%` }}
-        />
-      </div>
-    </div>
-  )
-}
-
-function SummaryHistogram({
+function SummaryCard({
   label,
   value,
   className,
@@ -178,7 +171,7 @@ function SummaryHistogram({
   className: string
 }) {
   return (
-    <div className={`diagnostic-summary ${className}`}>
+    <div className={`diagnostic-summary-card ${className}`}>
       <strong>{value}</strong>
       <span>{label}</span>
     </div>
@@ -186,10 +179,25 @@ function SummaryHistogram({
 }
 
 export default function DiagnosticsPage() {
+  const {
+    sites,
+    selectedSiteId,
+    selectedSite,
+    loading: sitesLoading,
+    setSelectedSiteId,
+  } = useSites()
+
   const [diagnostics, setDiagnostics] = useState<Diagnostic[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<Diagnostic | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
+
+  const diagnosticsForSelectedSite = selectedSiteId
+    ? diagnostics.filter(
+        (diagnostic) => diagnostic.siteId === selectedSiteId,
+      )
+    : []
 
   async function loadDiagnostics() {
     try {
@@ -204,15 +212,6 @@ export default function DiagnosticsPage() {
         )
       }
 
-      /*
-       * El endpoint /diagnostics devuelve directamente
-       * un array de diagnósticos:
-       *
-       * [
-       *   { ... },
-       *   { ... }
-       * ]
-       */
       const data = (await response.json()) as DiagnosticsResponse
 
       setDiagnostics(data)
@@ -226,176 +225,350 @@ export default function DiagnosticsPage() {
       setLoading(false)
     }
   }
+async function createDiagnostic() {
+  if (!selectedSiteId) {
+    setError('Selecciona un sitio antes de ejecutar un diagnóstico.')
+    return
+  }
 
+  try {
+    setCreating(true)
+    setError(null)
+
+    const response = await apiFetch('/diagnostics', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        siteId: selectedSiteId,
+      }),
+    })
+
+    if (!response.ok) {
+      let message = `Error al crear diagnóstico: ${response.status}`
+
+      try {
+        const data = await response.json()
+
+        if (data?.error) {
+          message = data.error
+        }
+      } catch {
+        // dejamos el mensaje por status
+      }
+
+      throw new Error(message)
+    }
+
+    await loadDiagnostics()
+  } catch (err) {
+    setError(
+      err instanceof Error
+        ? err.message
+        : 'No fue posible crear el diagnóstico',
+    )
+  } finally {
+    setCreating(false)
+  }
+}
   useEffect(() => {
     void loadDiagnostics()
   }, [])
 
-  return (
-    <div className="page">
-      <div className="page-header">
-        <div>
-          <h1>Diagnósticos</h1>
+return (
+  <div className="page">
+    <div className="page-header diagnostics-page-header">
+      <div>
+        <h1>Diagnósticos</h1>
 
-          <p>
-            Historial y resultados del motor de diagnóstico de red
-            TECNOCOM180.
-          </p>
-        </div>
+        <p>
+          Estado, historial y resultados del motor de diagnóstico
+          de red TECNOCOM180.
+        </p>
+
+        {selectedSite && (
+          <div className="diagnostics-current-site">
+            <span>Sitio actual</span>
+
+            <strong>{selectedSite.name}</strong>
+
+            <small>{selectedSite.code}</small>
+          </div>
+        )}
+      </div>
+
+      <div className="diagnostics-header-actions">
+        <select
+          className="diagnostics-site-select"
+          value={selectedSiteId ?? ''}
+          disabled={sitesLoading}
+          onChange={(event) =>
+            setSelectedSiteId(event.target.value)
+          }
+        >
+          <option value="">
+            {sitesLoading
+              ? 'Cargando sitios...'
+              : 'Selecciona un sitio'}
+          </option>
+
+          {sites.map((site) => (
+            <option key={site.id} value={site.id}>
+              {site.name} ({site.code})
+            </option>
+          ))}
+        </select>
 
         <button
           type="button"
           className="button-primary"
-          onClick={() => void loadDiagnostics()}
+          onClick={() => void createDiagnostic()}
+          disabled={!selectedSiteId || creating}
         >
-          Actualizar
+          {creating
+            ? 'Creando diagnóstico...'
+            : 'Ejecutar diagnóstico'}
+        </button>
+
+        <button
+          type="button"
+          className="button-secondary"
+          onClick={() => void loadDiagnostics()}
+          disabled={loading}
+        >
+          {loading ? 'Actualizando...' : 'Actualizar'}
         </button>
       </div>
+    </div>
 
-      {loading && <p>Cargando diagnósticos...</p>}
+    {error && (
+      <div className="error-message">
+        {error}
+      </div>
+    )}
 
-      {error && <div className="error-message">{error}</div>}
-
-      {!loading && !error && diagnostics.length === 0 && (
+      {!selectedSiteId && !sitesLoading && (
         <div className="empty-state">
-          No existen diagnósticos registrados.
+          Selecciona un sitio para consultar sus diagnósticos.
         </div>
       )}
 
-      {!loading && !error && diagnostics.length > 0 && (
-        <div className="diagnostics-table-wrapper">
-          <table className="diagnostics-table">
-            <thead>
-              <tr>
-                <th>Diagnóstico</th>
-                <th>Estado</th>
-                <th>Ping</th>
-                <th>Download</th>
-                <th>Upload</th>
-                <th>Pérdida</th>
-                <th>Gateway</th>
-                <th>Internet</th>
-                <th>Inicio</th>
-                <th>Fin</th>
-                <th />
-              </tr>
-            </thead>
+      {selectedSiteId &&
+        loading &&
+        diagnostics.length === 0 && (
+          <div className="empty-state">
+            Cargando diagnósticos...
+          </div>
+        )}
 
-            <tbody>
-              {diagnostics.map((diagnostic) => {
-                const result = diagnostic.result
-                const raw = result?.rawResult
-                const speedtest = raw?.speedtest
+      {selectedSiteId &&
+        !loading &&
+        !error &&
+        diagnosticsForSelectedSite.length === 0 && (
+          <div className="empty-state">
+            No existen diagnósticos registrados para este sitio.
+          </div>
+        )}
 
-                /*
-                 * Para la tabla mostramos Ethernet como referencia
-                 * principal cuando existe Speedtest.
-                 */
-                const ethernet = speedtest?.ethernet
+      {selectedSiteId &&
+        !error &&
+        diagnosticsForSelectedSite.length > 0 && (
+          <div className="diagnostics-run-grid">
+            {diagnosticsForSelectedSite.map((diagnostic) => {
+              const result = diagnostic.result
+              const raw = result?.rawResult
 
-                /*
-                 * El status SUCCESS significa que el diagnóstico
-                 * terminó correctamente.
-                 *
-                 * El status real de la red está dentro de rawResult.status.
-                 */
-                const networkStatus =
-                  raw?.status ?? diagnostic.status
+              const networkStatus =
+                raw?.status ?? diagnostic.status
 
-                return (
-                  <tr key={diagnostic.id}>
-                    <td>
-                      <code>{diagnostic.id}</code>
-                    </td>
+              const ethernet =
+                raw?.speedtest?.ethernet
 
-                    <td>
-                      <span
-                        className={`diagnostic-status ${statusClass(
-                          networkStatus,
-                        )}`}
-                      >
-                        {statusLabel(networkStatus)}
+              const isRunning =
+                diagnostic.status === 'RUNNING' &&
+                !diagnostic.result
+
+              return (
+                <article
+                  key={diagnostic.id}
+                  className="diagnostic-run-card"
+                >
+                  <div className="diagnostic-run-card-header">
+                    <div>
+                      <span className="diagnostic-run-site-code">
+                        {diagnostic.site?.code ??
+                          selectedSite?.code ??
+                          'SITE'}
                       </span>
-                    </td>
 
-                    <td>
-                      {formatNumber(result?.pingMs, ' ms')}
-                    </td>
+                      <h2>
+                        {diagnostic.site?.name ??
+                          selectedSite?.name ??
+                          'Diagnóstico'}
+                      </h2>
 
-                    <td>
-                      {formatNumber(
-                        ethernet?.downloadMbps,
-                        ' Mbps',
-                      )}
-                    </td>
+                      <small>
+                        {formatDate(
+                          diagnostic.startedAt,
+                        )}
+                      </small>
+                    </div>
 
-                    <td>
-                      {formatNumber(
-                        ethernet?.uploadMbps,
-                        ' Mbps',
-                      )}
-                    </td>
+                    <span
+                      className={`diagnostic-status diagnostic-status-pill ${statusClass(
+                        networkStatus,
+                      )}`}
+                    >
+                      {statusLabel(networkStatus)}
+                    </span>
+                  </div>
 
-                    <td>
-                      {formatNumber(
-                        result?.packetLoss,
-                        ' %',
-                      )}
-                    </td>
+                  {isRunning ? (
+                    <div className="diagnostic-running-box">
+                      <div className="diagnostic-running-indicator">
+                        <span />
+                      </div>
 
-                    <td>
-                      {result?.gateway ?? '—'}
-                    </td>
+                      <div>
+                        <strong>
+                          Diagnóstico en ejecución
+                        </strong>
 
-                    <td>
-                      {result?.internet === true
-                        ? 'Sí'
-                        : result?.internet === false
-                          ? 'No'
-                          : '—'}
-                    </td>
+                        <p>
+                          Esperando resultados del agente
+                          del sitio.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="diagnostic-run-metrics">
+                      <div>
+                        <span>Ping</span>
 
-                    <td>
-                      {new Date(
-                        diagnostic.startedAt,
-                      ).toLocaleString()}
-                    </td>
+                        <strong>
+                          {formatNumber(
+                            result?.pingMs ??
+                              raw?.latency?.pingMs,
+                            ' ms',
+                          )}
+                        </strong>
+                      </div>
 
-                    <td>
+                      <div>
+                        <span>Download</span>
+
+                        <strong>
+                          {formatNumber(
+                            ethernet?.downloadMbps ??
+                              result?.downloadMbps,
+                            ' Mbps',
+                          )}
+                        </strong>
+                      </div>
+
+                      <div>
+                        <span>Upload</span>
+
+                        <strong>
+                          {formatNumber(
+                            ethernet?.uploadMbps ??
+                              result?.uploadMbps,
+                            ' Mbps',
+                          )}
+                        </strong>
+                      </div>
+
+                      <div>
+                        <span>Pérdida</span>
+
+                        <strong>
+                          {formatNumber(
+                            result?.packetLoss ??
+                              raw?.latency
+                                ?.packetLoss,
+                            ' %',
+                          )}
+                        </strong>
+                      </div>
+                    </div>
+                  )}
+
+                  {!isRunning && (
+                    <div className="diagnostic-run-footer-data">
+                      <span>
+                        Internet:{' '}
+                        <strong>
+                          {result?.internet === true ||
+                          raw?.internet === true
+                            ? 'Sí'
+                            : result?.internet ===
+                                  false ||
+                                raw?.internet ===
+                                  false
+                              ? 'No'
+                              : '—'}
+                        </strong>
+                      </span>
+
+                      <span>
+                        Gateway:{' '}
+                        <strong>
+                          {result?.gateway ??
+                            raw?.internetRoute
+                              ?.gateway ??
+                            '—'}
+                        </strong>
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="diagnostic-run-card-footer">
+                    <span>
                       {diagnostic.finishedAt
-                        ? new Date(
+                        ? `Finalizado ${formatDate(
                             diagnostic.finishedAt,
-                          ).toLocaleString()
-                        : '—'}
-                    </td>
+                          )}`
+                        : 'Pendiente de finalización'}
+                    </span>
 
-                    <td>
-                      <button
-                        type="button"
-                        className="button-secondary"
-                        onClick={() =>
-                          setSelected(diagnostic)
-                        }
-                      >
-                        Ver
-                      </button>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      onClick={() =>
+                        setSelected(diagnostic)
+                      }
+                    >
+                      Ver detalle
+                    </button>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        )}
 
       {selected && (
         <div className="diagnostic-modal-backdrop">
-          <div className="diagnostic-modal">
+          <div className="diagnostic-modal diagnostic-modal-redesign">
             <div className="diagnostic-modal-header">
               <div>
-                <h2>Detalle del diagnóstico</h2>
+                <span className="diagnostic-detail-site-code">
+                  {selected.site?.code ??
+                    selectedSite?.code ??
+                    'SITE'}
+                </span>
 
-                <code>{selected.id}</code>
+                <h2>
+                  {selected.site?.name ??
+                    selectedSite?.name ??
+                    'Detalle del diagnóstico'}
+                </h2>
+
+                <p>
+                  Inicio:{' '}
+                  {formatDate(selected.startedAt)}
+                </p>
               </div>
 
               <button
@@ -411,6 +584,72 @@ export default function DiagnosticsPage() {
               const result = selected.result
               const raw = result?.rawResult
 
+              const networkStatus =
+                raw?.status ?? selected.status
+
+              const isRunning =
+                selected.status === 'RUNNING' &&
+                !result
+
+              if (isRunning) {
+                return (
+                  <div className="diagnostic-detail-running">
+                    <div className="diagnostic-running-indicator large">
+                      <span />
+                    </div>
+
+                    <h3>
+                      Diagnóstico en ejecución
+                    </h3>
+
+                    <p>
+                      El diagnóstico fue registrado y se
+                      encuentra esperando resultados del
+                      agente asociado al sitio.
+                    </p>
+
+                    <div className="diagnostic-running-info">
+                      <div>
+                        <span>Estado</span>
+
+                        <strong>Ejecutando</strong>
+                      </div>
+
+                      <div>
+                        <span>Inicio</span>
+
+                        <strong>
+                          {formatDate(
+                            selected.startedAt,
+                          )}
+                        </strong>
+                      </div>
+
+                      <div>
+                        <span>Sitio</span>
+
+                        <strong>
+                          {selected.site?.name ??
+                            selectedSite?.name ??
+                            '—'}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <details className="diagnostic-technical-details">
+                      <summary>
+                        Datos técnicos
+                      </summary>
+
+                      <div className="diagnostic-technical-id">
+                        <span>Diagnostic ID</span>
+                        <code>{selected.id}</code>
+                      </div>
+                    </details>
+                  </div>
+                )
+              }
+
               const summary = raw?.summary
               const route = raw?.internetRoute
               const latency = raw?.latency
@@ -423,511 +662,412 @@ export default function DiagnosticsPage() {
               const wifiSpeed =
                 raw?.speedtest?.wifi
 
-              const networkStatus =
-                raw?.status ?? selected.status
-
               return (
-                <>
-                  {/* ================================================= */}
-                  {/* MOTOR V8 */}
-                  {/* ================================================= */}
-
-                  <section className="diagnostic-section">
-                    <h3>Resultado del motor V8</h3>
-
-                    <div className="diagnostic-status-large">
-                      <span>Estado</span>
+                <div className="diagnostic-detail-content">
+                  <section className="diagnostic-topic-card diagnostic-topic-overview">
+                    <div className="diagnostic-topic-header">
+                      <div>
+                        <span>Resumen</span>
+                        <h3>Estado general</h3>
+                      </div>
 
                       <strong
-                        className={statusClass(
+                        className={`diagnostic-status diagnostic-status-pill ${statusClass(
+                          networkStatus,
+                        )}`}
+                      >
+                        {statusLabel(
                           networkStatus,
                         )}
-                      >
-                        {statusLabel(networkStatus)}
                       </strong>
                     </div>
 
                     <div className="diagnostic-summary-grid">
-                      <SummaryHistogram
+                      <SummaryCard
                         label="PASS"
-                        value={summary?.pass ?? 0}
+                        value={
+                          summary?.pass ?? 0
+                        }
                         className="summary-pass"
                       />
 
-                      <SummaryHistogram
+                      <SummaryCard
                         label="WARNING"
-                        value={summary?.warning ?? 0}
+                        value={
+                          summary?.warning ?? 0
+                        }
                         className="summary-warning"
                       />
 
-                      <SummaryHistogram
+                      <SummaryCard
                         label="FAIL"
-                        value={summary?.fail ?? 0}
+                        value={
+                          summary?.fail ?? 0
+                        }
                         className="summary-fail"
                       />
 
-                      <SummaryHistogram
+                      <SummaryCard
                         label="SKIP"
-                        value={summary?.skip ?? 0}
+                        value={
+                          summary?.skip ?? 0
+                        }
                         className="summary-skip"
                       />
                     </div>
                   </section>
 
-                  {/* ================================================= */}
-                  {/* RUTA */}
-                  {/* ================================================= */}
+                  <div className="diagnostic-topic-grid">
+                    <section className="diagnostic-topic-card">
+                      <div className="diagnostic-topic-header">
+                        <div>
+                          <span>Red</span>
+                          <h3>Conectividad</h3>
+                        </div>
+                      </div>
 
-                  <section className="diagnostic-section">
-                    <h3>Ruta a Internet</h3>
+                      <div className="diagnostic-detail-grid">
+                        <MetricCard
+                          label="Internet"
+                          value={
+                            raw?.internet === true
+                              ? 'Sí'
+                              : raw?.internet ===
+                                  false
+                                ? 'No'
+                                : result
+                                      ?.internet ===
+                                    true
+                                  ? 'Sí'
+                                  : result
+                                        ?.internet ===
+                                      false
+                                    ? 'No'
+                                    : '—'
+                          }
+                        />
 
-                    <div className="diagnostic-metric-grid">
-                      <MetricCard
-                        label="Interfaz"
-                        value={
-                          route?.interface ?? '—'
-                        }
-                      />
+                        <MetricCard
+                          label="Interfaz"
+                          value={
+                            route?.interface ??
+                            '—'
+                          }
+                        />
 
-                      <MetricCard
-                        label="IP origen"
-                        value={
-                          route?.sourceIp ?? '—'
-                        }
-                      />
+                        <MetricCard
+                          label="IP origen"
+                          value={
+                            route?.sourceIp ??
+                            '—'
+                          }
+                        />
 
-                      <MetricCard
-                        label="Gateway"
-                        value={
-                          route?.gateway ?? '—'
-                        }
-                      />
+                        <MetricCard
+                          label="Gateway"
+                          value={
+                            route?.gateway ??
+                            result?.gateway ??
+                            '—'
+                          }
+                        />
+                      </div>
+                    </section>
 
-                      <MetricCard
-                        label="Internet"
-                        value={
-                          raw?.internet === true
-                            ? 'Sí'
-                            : raw?.internet === false
-                              ? 'No'
-                              : '—'
-                        }
-                      />
-                    </div>
-                  </section>
+                    <section className="diagnostic-topic-card">
+                      <div className="diagnostic-topic-header">
+                        <div>
+                          <span>Calidad</span>
+                          <h3>
+                            Latencia y pérdida
+                          </h3>
+                        </div>
+                      </div>
 
-                  {/* ================================================= */}
-                  {/* LATENCIA */}
-                  {/* ================================================= */}
+                      <div className="diagnostic-detail-grid">
+                        <MetricCard
+                          label="Ping"
+                          value={formatNumber(
+                            latency?.pingMs ??
+                              result?.pingMs,
+                            ' ms',
+                          )}
+                        />
 
-                  <section className="diagnostic-section">
-                    <h3>Latencia y pérdida</h3>
+                        <MetricCard
+                          label="Pérdida"
+                          value={formatNumber(
+                            latency?.packetLoss ??
+                              result?.packetLoss,
+                            ' %',
+                          )}
+                        />
+                      </div>
+                    </section>
 
-                    <div className="diagnostic-metric-grid">
-                      <MetricCard
-                        label="Ping al gateway"
-                        value={formatNumber(
-                          latency?.pingMs,
-                          ' ms',
-                        )}
-                      />
+                    <section className="diagnostic-topic-card">
+                      <div className="diagnostic-topic-header">
+                        <div>
+                          <span>Internet</span>
+                          <h3>
+                            Speedtest Ethernet
+                          </h3>
+                        </div>
+                      </div>
 
-                      <MetricCard
-                        label="Pérdida"
-                        value={formatNumber(
-                          latency?.packetLoss,
-                          ' %',
-                        )}
-                      />
-                    </div>
+                      <div className="diagnostic-detail-grid">
+                        <MetricCard
+                          label="Interfaz"
+                          value={
+                            ethernetSpeed
+                              ?.interface ??
+                            '—'
+                          }
+                        />
 
-                    <div className="diagnostic-histogram-grid">
-                      <Histogram
-                        label="Latencia"
-                        value={latency?.pingMs}
-                        max={100}
-                        unit="ms"
-                      />
+                        <MetricCard
+                          label="Download"
+                          value={formatNumber(
+                            ethernetSpeed
+                              ?.downloadMbps ??
+                              result
+                                ?.downloadMbps,
+                            ' Mbps',
+                          )}
+                        />
 
-                      <Histogram
-                        label="Pérdida"
-                        value={latency?.packetLoss}
-                        max={100}
-                        unit="%"
-                      />
-                    </div>
-                  </section>
+                        <MetricCard
+                          label="Upload"
+                          value={formatNumber(
+                            ethernetSpeed
+                              ?.uploadMbps ??
+                              result
+                                ?.uploadMbps,
+                            ' Mbps',
+                          )}
+                        />
 
-                  {/* ================================================= */}
-                  {/* SPEEDTEST ETHERNET */}
-                  {/* ================================================= */}
+                        <MetricCard
+                          label="Latencia"
+                          value={formatNumber(
+                            ethernetSpeed
+                              ?.latencyMs,
+                            ' ms',
+                          )}
+                        />
 
-                  <section className="diagnostic-section">
-                    <h3>Speedtest — Ethernet</h3>
+                        <MetricCard
+                          label="Jitter"
+                          value={formatNumber(
+                            ethernetSpeed
+                              ?.jitterMs,
+                            ' ms',
+                          )}
+                        />
 
-                    <div className="diagnostic-metric-grid">
-                      <MetricCard
-                        label="Interfaz"
-                        value={
-                          ethernetSpeed?.interface ??
-                          '—'
-                        }
-                      />
+                        <MetricCard
+                          label="Pérdida"
+                          value={formatNumber(
+                            ethernetSpeed
+                              ?.packetLoss,
+                            ' %',
+                          )}
+                        />
 
-                      <MetricCard
-                        label="Download"
-                        value={formatNumber(
-                          ethernetSpeed?.downloadMbps,
-                          ' Mbps',
-                        )}
-                      />
+                        <MetricCard
+                          label="Servidor"
+                          value={
+                            ethernetSpeed
+                              ?.server ??
+                            '—'
+                          }
+                        />
+                      </div>
+                    </section>
 
-                      <MetricCard
-                        label="Upload"
-                        value={formatNumber(
-                          ethernetSpeed?.uploadMbps,
-                          ' Mbps',
-                        )}
-                      />
+                    <section className="diagnostic-topic-card">
+                      <div className="diagnostic-topic-header">
+                        <div>
+                          <span>Wireless</span>
+                          <h3>WiFi</h3>
+                        </div>
+                      </div>
 
-                      <MetricCard
-                        label="Latencia"
-                        value={formatNumber(
-                          ethernetSpeed?.latencyMs,
-                          ' ms',
-                        )}
-                      />
+                      <div className="diagnostic-detail-grid">
+                        <MetricCard
+                          label="SSID"
+                          value={
+                            wifi?.ssid ?? '—'
+                          }
+                        />
 
-                      <MetricCard
-                        label="Jitter"
-                        value={formatNumber(
-                          ethernetSpeed?.jitterMs,
-                          ' ms',
-                        )}
-                      />
+                        <MetricCard
+                          label="BSSID"
+                          value={
+                            wifi?.bssid ?? '—'
+                          }
+                        />
 
-                      <MetricCard
-                        label="Pérdida"
-                        value={formatNumber(
-                          ethernetSpeed?.packetLoss,
-                          ' %',
-                        )}
-                      />
+                        <MetricCard
+                          label="Señal"
+                          value={formatNumber(
+                            wifi?.signalDbm,
+                            ' dBm',
+                          )}
+                        />
 
-                      <MetricCard
-                        label="Servidor"
-                        value={
-                          ethernetSpeed?.server ??
-                          '—'
-                        }
-                      />
-                    </div>
+                        <MetricCard
+                          label="Frecuencia"
+                          value={formatNumber(
+                            wifi?.frequencyMHz,
+                            ' MHz',
+                            0,
+                          )}
+                        />
 
-                    <div className="diagnostic-histogram-grid">
-                      <Histogram
-                        label="Download"
-                        value={
-                          ethernetSpeed?.downloadMbps
-                        }
-                        max={1000}
-                        unit="Mbps"
-                      />
+                        <MetricCard
+                          label="RX PHY"
+                          value={formatNumber(
+                            wifi?.rxBitrateMbps,
+                            ' Mbps',
+                          )}
+                        />
 
-                      <Histogram
-                        label="Upload"
-                        value={
-                          ethernetSpeed?.uploadMbps
-                        }
-                        max={1000}
-                        unit="Mbps"
-                      />
+                        <MetricCard
+                          label="TX PHY"
+                          value={formatNumber(
+                            wifi?.txBitrateMbps,
+                            ' Mbps',
+                          )}
+                        />
 
-                      <Histogram
-                        label="Latencia"
-                        value={
-                          ethernetSpeed?.latencyMs
-                        }
-                        max={100}
-                        unit="ms"
-                      />
+                        <MetricCard
+                          label="Download"
+                          value={formatNumber(
+                            wifiSpeed
+                              ?.downloadMbps,
+                            ' Mbps',
+                          )}
+                        />
 
-                      <Histogram
-                        label="Jitter"
-                        value={
-                          ethernetSpeed?.jitterMs
-                        }
-                        max={50}
-                        unit="ms"
-                      />
+                        <MetricCard
+                          label="Upload"
+                          value={formatNumber(
+                            wifiSpeed
+                              ?.uploadMbps,
+                            ' Mbps',
+                          )}
+                        />
 
-                      <Histogram
-                        label="Pérdida"
-                        value={
-                          ethernetSpeed?.packetLoss
-                        }
-                        max={100}
-                        unit="%"
-                      />
-                    </div>
-                  </section>
+                        <MetricCard
+                          label="Latencia"
+                          value={formatNumber(
+                            wifiSpeed?.latencyMs,
+                            ' ms',
+                          )}
+                        />
 
-                  {/* ================================================= */}
-                  {/* SPEEDTEST WIFI */}
-                  {/* ================================================= */}
+                        <MetricCard
+                          label="Jitter"
+                          value={formatNumber(
+                            wifiSpeed?.jitterMs,
+                            ' ms',
+                          )}
+                        />
+                      </div>
+                    </section>
 
-                  <section className="diagnostic-section">
-                    <h3>Speedtest — WiFi</h3>
+                    <section className="diagnostic-topic-card">
+                      <div className="diagnostic-topic-header">
+                        <div>
+                          <span>Resolución</span>
+                          <h3>DNS</h3>
+                        </div>
+                      </div>
 
-                    <div className="diagnostic-metric-grid">
-                      <MetricCard
-                        label="Interfaz"
-                        value={
-                          wifiSpeed?.interface ??
-                          '—'
-                        }
-                      />
+                      <div className="diagnostic-detail-grid">
+                        <MetricCard
+                          label="Servidores"
+                          value={
+                            dns?.servers?.join(
+                              ', ',
+                            ) ??
+                            result?.dns ??
+                            '—'
+                          }
+                        />
 
-                      <MetricCard
-                        label="Download"
-                        value={formatNumber(
-                          wifiSpeed?.downloadMbps,
-                          ' Mbps',
-                        )}
-                      />
+                        <MetricCard
+                          label="Operativo"
+                          value={
+                            dns?.operational ===
+                            true
+                              ? 'Sí'
+                              : dns?.operational ===
+                                  false
+                                ? 'No'
+                                : '—'
+                          }
+                        />
+                      </div>
+                    </section>
 
-                      <MetricCard
-                        label="Upload"
-                        value={formatNumber(
-                          wifiSpeed?.uploadMbps,
-                          ' Mbps',
-                        )}
-                      />
+                    <section className="diagnostic-topic-card">
+                      <div className="diagnostic-topic-header">
+                        <div>
+                          <span>Ejecución</span>
+                          <h3>Tiempos</h3>
+                        </div>
+                      </div>
 
-                      <MetricCard
-                        label="Latencia"
-                        value={formatNumber(
-                          wifiSpeed?.latencyMs,
-                          ' ms',
-                        )}
-                      />
+                      <div className="diagnostic-detail-grid">
+                        <MetricCard
+                          label="Inicio"
+                          value={formatDate(
+                            selected.startedAt,
+                          )}
+                        />
 
-                      <MetricCard
-                        label="Jitter"
-                        value={formatNumber(
-                          wifiSpeed?.jitterMs,
-                          ' ms',
-                        )}
-                      />
+                        <MetricCard
+                          label="Fin"
+                          value={formatDate(
+                            selected.finishedAt,
+                          )}
+                        />
+                      </div>
+                    </section>
+                  </div>
 
-                      <MetricCard
-                        label="Pérdida"
-                        value={formatNumber(
-                          wifiSpeed?.packetLoss,
-                          ' %',
-                        )}
-                      />
+                  <details className="diagnostic-technical-details">
+                    <summary>
+                      Datos técnicos / JSON
+                    </summary>
 
-                      <MetricCard
-                        label="Servidor"
-                        value={
-                          wifiSpeed?.server ??
-                          '—'
-                        }
-                      />
-                    </div>
+                    <div className="diagnostic-technical-id">
+                      <span>Diagnostic ID</span>
 
-                    <div className="diagnostic-histogram-grid">
-                      <Histogram
-                        label="Download"
-                        value={
-                          wifiSpeed?.downloadMbps
-                        }
-                        max={1000}
-                        unit="Mbps"
-                      />
-
-                      <Histogram
-                        label="Upload"
-                        value={
-                          wifiSpeed?.uploadMbps
-                        }
-                        max={1000}
-                        unit="Mbps"
-                      />
-
-                      <Histogram
-                        label="Latencia"
-                        value={
-                          wifiSpeed?.latencyMs
-                        }
-                        max={100}
-                        unit="ms"
-                      />
-
-                      <Histogram
-                        label="Jitter"
-                        value={
-                          wifiSpeed?.jitterMs
-                        }
-                        max={50}
-                        unit="ms"
-                      />
-
-                      <Histogram
-                        label="Pérdida"
-                        value={
-                          wifiSpeed?.packetLoss
-                        }
-                        max={100}
-                        unit="%"
-                      />
-                    </div>
-                  </section>
-
-                  {/* ================================================= */}
-                  {/* WIFI PHY */}
-                  {/* ================================================= */}
-
-                  <section className="diagnostic-section">
-                    <h3>WiFi — enlace</h3>
-
-                    <div className="diagnostic-metric-grid">
-                      <MetricCard
-                        label="SSID"
-                        value={
-                          wifi?.ssid ?? '—'
-                        }
-                      />
-
-                      <MetricCard
-                        label="BSSID"
-                        value={
-                          wifi?.bssid ?? '—'
-                        }
-                      />
-
-                      <MetricCard
-                        label="Frecuencia"
-                        value={formatNumber(
-                          wifi?.frequencyMHz,
-                          ' MHz',
-                          0,
-                        )}
-                      />
-
-                      <MetricCard
-                        label="Señal"
-                        value={formatNumber(
-                          wifi?.signalDbm,
-                          ' dBm',
-                        )}
-                      />
-
-                      <MetricCard
-                        label="RX PHY"
-                        value={formatNumber(
-                          wifi?.rxBitrateMbps,
-                          ' Mbps',
-                        )}
-                      />
-
-                      <MetricCard
-                        label="TX PHY"
-                        value={formatNumber(
-                          wifi?.txBitrateMbps,
-                          ' Mbps',
-                        )}
-                      />
+                      <code>
+                        {selected.id}
+                      </code>
                     </div>
 
-                    <div className="diagnostic-histogram-grid">
-                      <Histogram
-                        label="Señal WiFi"
-                        value={
-                          wifi?.signalDbm !==
-                            null &&
-                          wifi?.signalDbm !==
-                            undefined
-                            ? Math.abs(
-                                wifi.signalDbm,
-                              )
-                            : null
-                        }
-                        max={100}
-                        unit="dBm"
-                      />
+                    <div className="diagnostic-technical-id">
+                      <span>Site ID</span>
 
-                      <Histogram
-                        label="RX PHY"
-                        value={
-                          wifi?.rxBitrateMbps
-                        }
-                        max={1000}
-                        unit="Mbps"
-                      />
-
-                      <Histogram
-                        label="TX PHY"
-                        value={
-                          wifi?.txBitrateMbps
-                        }
-                        max={1000}
-                        unit="Mbps"
-                      />
+                      <code>
+                        {selected.siteId ?? '—'}
+                      </code>
                     </div>
-                  </section>
 
-                  {/* ================================================= */}
-                  {/* DNS */}
-                  {/* ================================================= */}
-
-                  <section className="diagnostic-section">
-                    <h3>DNS</h3>
-
-                    <div className="diagnostic-metric-grid">
-                      <MetricCard
-                        label="Servidores"
-                        value={
-                          dns?.servers?.join(
-                            ', ',
-                          ) ?? '—'
-                        }
-                      />
-
-                      <MetricCard
-                        label="Operativo"
-                        value={
-                          dns?.operational === true
-                            ? 'Sí'
-                            : dns?.operational ===
-                                false
-                              ? 'No'
-                              : '—'
-                        }
-                      />
-                    </div>
-                  </section>
-
-                  {/* ================================================= */}
-                  {/* JSON */}
-                  {/* ================================================= */}
-
-                  <section className="diagnostic-section">
-                    <details>
-                      <summary>
-                        Ver JSON completo recibido
-                      </summary>
-
-                      <pre className="diagnostic-json">
-                        {JSON.stringify(
-                          raw ?? result,
-                          null,
-                          2,
-                        )}
-                      </pre>
-                    </details>
-                  </section>
-                </>
+                    <pre className="diagnostic-json">
+                      {JSON.stringify(
+                        raw ?? result,
+                        null,
+                        2,
+                      )}
+                    </pre>
+                  </details>
+                </div>
               )
             })()}
           </div>
