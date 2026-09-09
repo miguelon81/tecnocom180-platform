@@ -193,6 +193,8 @@ model Site {
 
   users UserSite[]
 
+  diagnostics DiagnosticRun[]
+
   @@unique([organizationId, code])
   @@index([organizationId])
 }
@@ -379,7 +381,6 @@ model GuestWifiAccess {
 
   updatedAt DateTime @updatedAt
 
-
   @@index([status])
   @@index([expiresAt])
 }
@@ -564,6 +565,12 @@ model DiagnosticRun {
 
   organization Organization @relation(fields: [organizationId], references: [id])
 
+  // Nullable temporalmente para conservar diagnósticos históricos
+  // que fueron creados antes del aislamiento por sitio.
+  siteId String?
+
+  site Site? @relation(fields: [siteId], references: [id])
+
   status DiagnosticStatus @default(RUNNING)
 
   startedAt DateTime @default(now())
@@ -573,6 +580,7 @@ model DiagnosticRun {
   result DiagnosticResult?
 
   @@index([organizationId])
+  @@index([siteId])
 }
 
 // =====================
