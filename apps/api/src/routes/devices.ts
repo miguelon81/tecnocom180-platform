@@ -137,41 +137,54 @@ function optionalText(value: unknown) {
 async function generateDeviceCode() {
   const prefix = "TC180-";
 
-  const lastDevice = await prisma.device.findFirst({
+  const devices = await prisma.device.findMany({
     where: {
       deviceCode: {
         startsWith: prefix,
       },
-    },
-    orderBy: {
-      deviceCode: "desc",
     },
     select: {
       deviceCode: true,
     },
   });
 
-  let nextNumber = 1;
+  let highestNumber = 0;
 
-  if (lastDevice?.deviceCode) {
-    const numericPart = lastDevice.deviceCode.replace(
-      prefix,
-      "",
+  for (const device of devices) {
+    if (!device.deviceCode) {
+      continue;
+    }
+
+    const numericPart = device.deviceCode.slice(
+      prefix.length,
     );
+
+    // Solo acepta códigos normales:
+    // TC180-000001
+    // TC180-000002
+    // etc.
+    //
+    // Ignora:
+    // TC180-AG-000001
+    // u otros prefijos especiales.
+    if (!/^\d{6}$/.test(numericPart)) {
+      continue;
+    }
 
     const parsedNumber = Number(numericPart);
 
-    if (
-      Number.isInteger(parsedNumber) &&
-      parsedNumber > 0
-    ) {
-      nextNumber = parsedNumber + 1;
+    if (parsedNumber > highestNumber) {
+      highestNumber = parsedNumber;
     }
   }
 
-  return `${prefix}${String(nextNumber).padStart(6, "0")}`;
-}
+  const nextNumber = highestNumber + 1;
 
+  return `${prefix}${String(nextNumber).padStart(
+    6,
+    "0",
+  )}`;
+}
 // ============================================================
 // GET /devices
 // GET /devices?siteId=xxx
