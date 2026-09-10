@@ -3175,3 +3175,25 @@ h1 {
     grid-template-columns: 1fr;
   }
 }
+
+.diagnostics-agent-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.diagnostics-agent-dot {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.diagnostics-agent-online {
+  color: #16a34a;
+}
+
+.diagnostics-agent-offline {
+  color: #dc2626;
+}

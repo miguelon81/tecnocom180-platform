@@ -174,54 +174,59 @@ const [iotTelemetryLoading, setIotTelemetryLoading] =
   const [form, setForm] =
     useState<DeviceForm>(emptyForm)
 
-  async function loadDevices() {
-    try {
+  async function loadDevices(silent = false) {
+  try {
+    if (!silent) {
       setLoading(true)
-      setError(null)
+    }
 
-      const query = new URLSearchParams()
+    setError(null)
 
-      if (selectedSiteId) {
-        query.set('siteId', selectedSiteId)
-      }
+    const query = new URLSearchParams()
 
-      if (selectedAreaId) {
-        query.set('areaId', selectedAreaId)
-      }
+    if (selectedSiteId) {
+      query.set('siteId', selectedSiteId)
+    }
 
-      const suffix = query.toString()
-        ? `?${query.toString()}`
-        : ''
+    if (selectedAreaId) {
+      query.set('areaId', selectedAreaId)
+    }
 
-      const response = await apiFetch(
-        `/devices${suffix}`,
+    const suffix = query.toString()
+      ? `?${query.toString()}`
+      : ''
+
+    const response = await apiFetch(
+      `/devices${suffix}`,
+    )
+
+    if (!response.ok) {
+      throw new Error(
+        'No se pudieron cargar los dispositivos',
       )
+    }
 
-      if (!response.ok) {
-        throw new Error(
-          'No se pudieron cargar los dispositivos',
-        )
-      }
+    const data = await response.json()
 
-      const data = await response.json()
+    setDevices(
+      Array.isArray(data)
+        ? data
+        : [],
+    )
+  } catch (err) {
+    console.error(err)
 
-      setDevices(
-        Array.isArray(data)
-          ? data
-          : [],
-      )
-    } catch (err) {
-      console.error(err)
-
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'No se pudieron cargar los dispositivos',
-      )
-    } finally {
+    setError(
+      err instanceof Error
+        ? err.message
+        : 'No se pudieron cargar los dispositivos',
+    )
+  } finally {
+    if (!silent) {
       setLoading(false)
     }
   }
+}
 
   async function initialize() {
     try {
@@ -356,9 +361,78 @@ const [iotTelemetryLoading, setIotTelemetryLoading] =
     selectedAreaId,
   ])
 
+  useEffect(() => {
+  if (!selectedSiteId) {
+    return
+  }
+
+  const interval = window.setInterval(() => {
+    void loadDevices(true)
+  }, 10000)
+
+  return () => {
+    window.clearInterval(interval)
+  }
+}, [
+  selectedSiteId,
+  selectedAreaId,
+])
+
 
 function isIotDevice(device: Device) {
   return device.model?.type === 'IOT'
+}
+
+function isAgentDevice(device: Device) {
+  return device.model?.type === 'AGENT'
+}
+
+const AGENT_STALE_MS = 90 * 1000
+const IOT_STALE_MS = 5 * 60 * 60 * 1000
+
+function isRecentDate(
+  value: string | null | undefined,
+  maxAgeMs: number,
+) {
+  if (!value) {
+    return false
+  }
+
+  const timestamp = new Date(value).getTime()
+
+  if (Number.isNaN(timestamp)) {
+    return false
+  }
+
+  return Date.now() - timestamp <= maxAgeMs
+}
+
+function isDeviceEffectivelyOnline(
+  device: Device,
+  telemetry?: DeviceTelemetry | null,
+) {
+  if (isAgentDevice(device)) {
+    return (
+      device.online &&
+      isRecentDate(
+        device.lastSeenAt,
+        AGENT_STALE_MS,
+      )
+    )
+  }
+
+  if (isIotDevice(device)) {
+    const lastCommunication =
+      device.lastSeenAt ??
+      telemetry?.createdAt
+
+    return isRecentDate(
+      lastCommunication,
+      IOT_STALE_MS,
+    )
+  }
+
+  return device.online
 }
 
 useEffect(() => {
@@ -1829,26 +1903,32 @@ function getLevelClass(
       ) : (
        <div className="devices-grid">
   {devices.map((device) => {
-    const isIot =
-      isIotDevice(device)
+  const isIot =
+    isIotDevice(device)
 
-    const telemetry =
-      iotTelemetry[device.id]
+  const telemetry =
+    iotTelemetry[device.id]
 
-    const telemetryIsLoading =
-      iotTelemetryLoading[device.id]
+  const telemetryIsLoading =
+    iotTelemetryLoading[device.id]
 
-    if (isIot) {
-      const level =
-        telemetry?.nivel ?? null
+  if (isIot) {
+    const effectivelyOnline =
+      isDeviceEffectivelyOnline(
+        device,
+        telemetry,
+      )
 
-      const safeLevel =
-        level === null
-          ? 0
-          : Math.max(
-              0,
-              Math.min(100, level),
-            )
+    const level =
+      telemetry?.nivel ?? null
+
+    const safeLevel =
+      level === null
+        ? 0
+        : Math.max(
+            0,
+            Math.min(100, level),
+          )
 
       return (
         <article
@@ -1871,17 +1951,17 @@ function getLevelClass(
             </div>
 
             <span
-              className={
-                device.online
-                  ? 'device-online-badge device-online'
-                  : 'device-online-badge device-offline'
-              }
-            >
-              <span />
-              {device.online
-                ? 'Online'
-                : 'Offline'}
-            </span>
+  className={
+    effectivelyOnline
+      ? 'device-online-badge device-online'
+      : 'device-online-badge device-offline'
+  }
+>
+  <span />
+  {effectivelyOnline
+    ? 'Online'
+    : 'Offline'}
+</span>
           </div>
 
           <div className="device-location">

@@ -82,6 +82,26 @@ type Diagnostic = {
 
 type DiagnosticsResponse = Diagnostic[]
 
+type DiagnosticAgent = {
+  id: string
+  deviceCode?: string | null
+  name?: string | null
+  hostname?: string | null
+  ip?: string | null
+  firmware?: string | null
+  online: boolean
+  lastSeenAt?: string | null
+  model?: {
+    id: string
+    name: string
+    type: string
+    brand?: {
+      id: string
+      name: string
+    } | null
+  } | null
+}
+
 function formatNumber(
   value: number | null | undefined,
   suffix = '',
@@ -149,6 +169,72 @@ function formatDate(value?: string | null) {
   return new Date(value).toLocaleString()
 }
 
+const AGENT_STALE_MS = 90 * 1000
+
+function isAgentOnline(
+  agent: DiagnosticAgent | null,
+) {
+  if (
+    !agent ||
+    !agent.online ||
+    !agent.lastSeenAt
+  ) {
+    return false
+  }
+
+  const lastSeen =
+    new Date(agent.lastSeenAt).getTime()
+
+  if (Number.isNaN(lastSeen)) {
+    return false
+  }
+
+  return (
+    Date.now() - lastSeen <=
+    AGENT_STALE_MS
+  )
+}
+
+function formatLastSeen(
+  value?: string | null,
+) {
+  if (!value) {
+    return 'Sin comunicación registrada'
+  }
+
+  const timestamp =
+    new Date(value).getTime()
+
+  if (Number.isNaN(timestamp)) {
+    return 'Fecha desconocida'
+  }
+
+  const seconds =
+    Math.max(
+      0,
+      Math.floor(
+        (Date.now() - timestamp) /
+          1000,
+      ),
+    )
+
+  if (seconds < 60) {
+    return `Hace ${seconds} s`
+  }
+
+  const minutes =
+    Math.floor(seconds / 60)
+
+  if (minutes < 60) {
+    return `Hace ${minutes} min`
+  }
+
+  const hours =
+    Math.floor(minutes / 60)
+
+  return `Hace ${hours} h`
+}
+
 function MetricCard({
   label,
   value,
@@ -200,12 +286,70 @@ export default function DiagnosticsPage() {
   const [selected, setSelected] = useState<Diagnostic | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
+  const [agent, setAgent] =
+    useState<DiagnosticAgent | null>(null)
+
+  const [agentLoading, setAgentLoading] =
+    useState(false)
+
+  const [agentClock, setAgentClock] =
+    useState(Date.now())
 
   const diagnosticsForSelectedSite = selectedSiteId
     ? diagnostics.filter(
         (diagnostic) => diagnostic.siteId === selectedSiteId,
       )
     : []
+  async function loadAgent(
+  silent = false,
+) {
+  if (!selectedSiteId) {
+    setAgent(null)
+    return
+  }
+
+  try {
+    if (!silent) {
+      setAgentLoading(true)
+    }
+
+    const response = await apiFetch(
+      `/devices?siteId=${selectedSiteId}`,
+    )
+
+    if (!response.ok) {
+      throw new Error(
+        'No se pudo consultar el agente del sitio',
+      )
+    }
+
+    const data = await response.json()
+
+    const devices =
+      Array.isArray(data)
+        ? data
+        : []
+
+    const diagnosticAgent =
+      devices.find(
+        (device: DiagnosticAgent) =>
+          device.model?.type === 'AGENT',
+      ) ?? null
+
+    setAgent(diagnosticAgent)
+  } catch (err) {
+    console.error(
+      'Error consultando agente:',
+      err,
+    )
+
+    setAgent(null)
+  } finally {
+    if (!silent) {
+      setAgentLoading(false)
+    }
+  }
+}
 
   async function loadDiagnostics(silent = false) {
     try {
@@ -250,7 +394,7 @@ export default function DiagnosticsPage() {
       }
     }
   }  
-async function createDiagnostic() {
+ async function createDiagnostic() {
   if (!selectedSiteId) {
     setError('Selecciona un sitio antes de ejecutar un diagnóstico.')
     return
@@ -302,6 +446,35 @@ async function createDiagnostic() {
   }, [])
 
   useEffect(() => {
+  if (!selectedSiteId) {
+    setAgent(null)
+    return
+  }
+
+  void loadAgent()
+
+  const intervalId =
+    window.setInterval(() => {
+      void loadAgent(true)
+    }, 10000)
+
+  return () => {
+    window.clearInterval(intervalId)
+  }
+}, [selectedSiteId])
+
+useEffect(() => {
+  const intervalId =
+    window.setInterval(() => {
+      setAgentClock(Date.now())
+    }, 10000)
+
+  return () => {
+    window.clearInterval(intervalId)
+  }
+}, [])
+
+  useEffect(() => {
     const hasRunningDiagnostic =
       diagnosticsForSelectedSite.some(
         (diagnostic) => diagnostic.status === 'RUNNING',
@@ -319,6 +492,17 @@ async function createDiagnostic() {
       window.clearInterval(intervalId)
     }
   }, [diagnosticsForSelectedSite])
+
+  const agentOnline =
+  isAgentOnline(agent)
+
+const agentLastSeen =
+  formatLastSeen(
+    agent?.lastSeenAt,
+  )
+
+void agentClock
+
 return (
   <div className="page">
     <div className="page-header diagnostics-page-header">
@@ -330,15 +514,64 @@ return (
           de red TECNOCOM180.
         </p>
 
-        {selectedSite && (
-          <div className="diagnostics-current-site">
-            <span>Sitio actual</span>
+      {selectedSite && (
+  <div className="diagnostics-current-site">
+    <span>Sitio actual</span>
 
-            <strong>{selectedSite.name}</strong>
+    <strong>{selectedSite.name}</strong>
 
-            <small>{selectedSite.code}</small>
-          </div>
-        )}
+    <small>{selectedSite.code}</small>
+
+    <div className="diagnostics-agent-status">
+      <span>
+        Agente NOC
+      </span>
+
+      {agentLoading ? (
+        <strong>
+          Consultando...
+        </strong>
+      ) : agent ? (
+        <>
+          <strong
+            className={
+              agentOnline
+                ? 'diagnostics-agent-online'
+                : 'diagnostics-agent-offline'
+            }
+          >
+           <span className="diagnostics-agent-state">
+             <span className="diagnostics-agent-dot" />
+             {agentOnline ? 'Online' : 'Offline'}
+           </span>
+          </strong>
+
+          <small>
+            {agent.name ??
+              agent.deviceCode ??
+              'Agente'}
+          </small>
+
+          <small>
+            {agent.ip
+              ? `IP ${agent.ip}`
+              : 'Sin IP registrada'}
+          </small>
+
+          <small>
+            Última comunicación: {agentLastSeen}
+          </small>
+        </>
+      ) : (
+        <strong className="status-fail">
+          Sin agente registrado
+        </strong>
+      )}
+    </div>
+  </div>
+)}
+        
+
       </div>
 
       <div className="diagnostics-header-actions">
@@ -367,7 +600,11 @@ return (
           type="button"
           className="button-primary"
           onClick={() => void createDiagnostic()}
-          disabled={!selectedSiteId || creating}
+          disabled={
+            !selectedSiteId ||
+            creating ||
+            !agentOnline
+          }
         >
           {creating
             ? 'Creando diagnóstico...'

@@ -108,12 +108,13 @@ async function processSensorTelemetry(
     return;
   }
 
-  await prisma.device.update({
+    await prisma.device.update({
     where: {
       id: device.id,
     },
     data: {
       online: true,
+      lastSeenAt: new Date(),
     },
   });
 
