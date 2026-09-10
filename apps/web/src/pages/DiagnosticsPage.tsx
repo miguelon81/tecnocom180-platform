@@ -11,6 +11,10 @@ type SpeedtestResult = {
   packetLoss?: number | null
   server?: string | null
 }
+type DiagnosticFinding = {
+  severity: 'WARNING' | 'FAIL' | 'SKIP'
+  message: string
+}
 
 type RawDiagnosticResult = {
   status?: string
@@ -20,6 +24,7 @@ type RawDiagnosticResult = {
     fail?: number
     skip?: number
   }
+  findings?: DiagnosticFinding[]
   internetRoute?: {
     interface?: string
     sourceIp?: string
@@ -125,6 +130,9 @@ function statusClass(status: string) {
     case 'FAILED':
       return 'status-fail'
 
+    case 'SKIP':
+      return 'status-skip'
+
     case 'RUNNING':
       return 'status-running'
 
@@ -199,9 +207,12 @@ export default function DiagnosticsPage() {
       )
     : []
 
-  async function loadDiagnostics() {
+  async function loadDiagnostics(silent = false) {
     try {
-      setLoading(true)
+      if (!silent) {
+        setLoading(true)
+      }
+
       setError(null)
 
       const response = await apiFetch('/diagnostics')
@@ -215,6 +226,18 @@ export default function DiagnosticsPage() {
       const data = (await response.json()) as DiagnosticsResponse
 
       setDiagnostics(data)
+
+      setSelected((current) => {
+        if (!current) {
+          return null
+        }
+
+        return (
+          data.find(
+            (diagnostic) => diagnostic.id === current.id,
+          ) ?? current
+        )
+      })
     } catch (err) {
       setError(
         err instanceof Error
@@ -222,9 +245,11 @@ export default function DiagnosticsPage() {
           : 'No fue posible cargar los diagnósticos',
       )
     } finally {
-      setLoading(false)
+      if (!silent) {
+        setLoading(false)
+      }
     }
-  }
+  }  
 async function createDiagnostic() {
   if (!selectedSiteId) {
     setError('Selecciona un sitio antes de ejecutar un diagnóstico.')
@@ -276,6 +301,24 @@ async function createDiagnostic() {
     void loadDiagnostics()
   }, [])
 
+  useEffect(() => {
+    const hasRunningDiagnostic =
+      diagnosticsForSelectedSite.some(
+        (diagnostic) => diagnostic.status === 'RUNNING',
+      )
+
+    if (!hasRunningDiagnostic) {
+      return
+    }
+
+    const intervalId = window.setInterval(() => {
+      void loadDiagnostics(true)
+    }, 3000)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [diagnosticsForSelectedSite])
 return (
   <div className="page">
     <div className="page-header diagnostics-page-header">
@@ -651,6 +694,7 @@ return (
               }
 
               const summary = raw?.summary
+              const findings = raw?.findings ?? []
               const route = raw?.internetRoute
               const latency = raw?.latency
               const dns = raw?.dns
@@ -716,6 +760,40 @@ return (
                       />
                     </div>
                   </section>
+                  
+                                    {findings.length > 0 && (
+                    <section className="diagnostic-topic-card">
+                      <div className="diagnostic-topic-header">
+                        <div>
+                          <span>Hallazgos</span>
+                          <h3>
+                            Advertencias y problemas detectados
+                          </h3>
+                        </div>
+                      </div>
+
+                      <div className="diagnostic-findings">
+                        {findings.map((finding, index) => (
+                          <div
+                            key={`${finding.severity}-${index}`}
+                            className={`diagnostic-finding ${statusClass(
+                              finding.severity,
+                            )}`}
+                          >
+                            <strong>
+                              {finding.severity === 'WARNING'
+                                ? 'Advertencia'
+                                : finding.severity === 'FAIL'
+                                  ? 'Fallo'
+                                  : 'Omitido'}
+                            </strong>
+
+                            <span>{finding.message}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  )}
 
                   <div className="diagnostic-topic-grid">
                     <section className="diagnostic-topic-card">
