@@ -1,0 +1,17 @@
+[Unit]
+Description=TECNOCOM180 Diagnostic Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=miguelpi
+Group=miguelpi
+WorkingDirectory=/home/miguelpi/tecnocom180-agent
+EnvironmentFile=/home/miguelpi/tecnocom180-agent/.env
+ExecStart=/usr/bin/node /home/miguelpi/tecnocom180-agent/agent.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
