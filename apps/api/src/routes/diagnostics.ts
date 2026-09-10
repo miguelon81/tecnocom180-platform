@@ -5,6 +5,9 @@ import {
   requireRole,
   AuthenticatedRequest,
 } from "../middleware/auth";
+import {
+  publishDiagnosticCommand,
+} from "../services/mqtt";
 
 const diagnosticsRouter = Router();
 
@@ -388,17 +391,79 @@ diagnosticsRouter.post(
         });
       }
 
-      const diagnostic =
-        await prisma.diagnosticRun.create({
-          data: {
-            organizationId: site.organizationId,
-            siteId: site.id,
-            status: "RUNNING",
-          },
-          include: diagnosticInclude,
-        });
+      const agent = await prisma.device.findFirst({
+  where: {
+    siteId: site.id,
 
-      res.status(201).json(diagnostic);
+    model: {
+      type: "AGENT",
+    },
+  },
+  select: {
+    id: true,
+    deviceCode: true,
+    name: true,
+    online: true,
+  },
+});
+
+if (!agent) {
+  return res.status(409).json({
+    error:
+      "No diagnostic agent is configured for this site",
+  });
+}
+
+if (!agent.deviceCode) {
+  return res.status(409).json({
+    error:
+      "The diagnostic agent does not have a deviceCode",
+  });
+}
+
+const diagnostic =
+  await prisma.diagnosticRun.create({
+    data: {
+      organizationId: site.organizationId,
+      siteId: site.id,
+      status: "RUNNING",
+    },
+    include: diagnosticInclude,
+  });
+
+try {
+  await publishDiagnosticCommand(
+    agent.deviceCode,
+    {
+      diagnosticId: diagnostic.id,
+      siteId: site.id,
+      requestedAt: new Date().toISOString(),
+    },
+  );
+} catch (mqttError) {
+  console.error(
+    "Error publishing diagnostic command:",
+    mqttError,
+  );
+
+  await prisma.diagnosticRun.update({
+    where: {
+      id: diagnostic.id,
+    },
+    data: {
+      status: "FAILED",
+      finishedAt: new Date(),
+    },
+  });
+
+  return res.status(503).json({
+    error:
+      "Diagnostic was created but the MQTT command could not be published",
+    diagnosticId: diagnostic.id,
+  });
+}
+
+res.status(201).json(diagnostic);
     } catch (error) {
       console.error(
         "Error creating diagnostic:",

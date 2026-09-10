@@ -37,6 +37,7 @@ enum DeviceType {
   SERVER
   NAS
   IOT
+  AGENT
   OTHER
 }
 
