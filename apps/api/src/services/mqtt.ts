@@ -55,15 +55,18 @@ type DiagnosticResultMessage = {
 mqttClient.on("connect", () => {
   console.log("MQTT conectado a HiveMQ Cloud");
 
-  mqttClient.subscribe(
-    {
-      "+/sensores/": {
-        qos: 0,
-      },
-      "+/diagnostics/result": {
-        qos: 1,
-      },
+    mqttClient.subscribe(
+  {
+    "+/sensores/": {
+      qos: 0,
     },
+    "+/status": {
+      qos: 1,
+    },
+    "+/diagnostics/result": {
+      qos: 1,
+    },
+  },
     (error: Error | null) => {
       if (error) {
         console.error(
@@ -74,6 +77,7 @@ mqttClient.on("connect", () => {
       }
 
       console.log("MQTT suscrito a +/sensores/");
+      console.log("MQTT suscrito a +/status");
       console.log(
         "MQTT suscrito a +/diagnostics/result",
       );
@@ -299,6 +303,83 @@ async function processDiagnosticResult(
   }
 }
 
+async function processAgentStatus(
+  deviceCode: string,
+  payload: string,
+) {
+  let statusPayload: Record<string, unknown> = {};
+
+  if (payload.trim()) {
+    try {
+      statusPayload = JSON.parse(payload);
+    } catch {
+      console.error(
+        `Payload de status inválido para ${deviceCode}`,
+      );
+      return;
+    }
+  }
+
+  const online =
+    statusPayload.online === false
+      ? false
+      : true;
+
+  const agent = await prisma.device.findUnique({
+    where: {
+      deviceCode,
+    },
+    include: {
+      model: true,
+    },
+  });
+
+  if (!agent) {
+    console.error(
+      `Agente no encontrado: ${deviceCode}`,
+    );
+    return;
+  }
+
+  if (agent.model.type !== "AGENT") {
+    console.error(
+      `El dispositivo ${deviceCode} no es un AGENT`,
+    );
+    return;
+  }
+
+  await prisma.device.update({
+    where: {
+      id: agent.id,
+    },
+    data: {
+      online,
+      lastSeenAt: new Date(),
+
+      ...(online &&
+        typeof statusPayload.ip === "string" && {
+          ip: statusPayload.ip,
+        }),
+
+      ...(online &&
+        typeof statusPayload.hostname === "string" && {
+          hostname: statusPayload.hostname,
+        }),
+
+      ...(online &&
+        typeof statusPayload.firmware === "string" && {
+          firmware: statusPayload.firmware,
+        }),
+    },
+  });
+
+  console.log(
+    `Estado agente: ${deviceCode} -> ${
+      online ? "ONLINE" : "OFFLINE"
+    }`,
+  );
+}
+
 // ============================================================
 // MQTT MESSAGE ROUTER
 // ============================================================
@@ -334,6 +415,20 @@ mqttClient.on(
 
       return;
     }
+
+    if (topic.endsWith("/status")) {
+  void processAgentStatus(
+    deviceCode,
+    payload,
+  ).catch((error: unknown) => {
+    console.error(
+      "Error procesando heartbeat del agente:",
+      error,
+    );
+  });
+
+  return;
+}
 
     if (
       topic.endsWith("/diagnostics/result")
@@ -432,6 +527,7 @@ mqttClient.on("close", () => {
     "MQTT conexión cerrada",
   );
 });
+
 
 export {
   mqttClient,

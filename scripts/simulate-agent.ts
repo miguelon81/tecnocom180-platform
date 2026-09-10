@@ -18,15 +18,55 @@ if (!password) {
   throw new Error("MQTT_PASSWORD no está configurado");
 }
 
+const STATUS_TOPIC =
+  `${DEVICE_CODE}/status`;
+
 const client = mqtt.connect(brokerUrl, {
   username,
   password,
-  clientId: `tc180-agent-simulator-${Math.random()
-    .toString(16)
-    .slice(2)}`,
-  clean: true,
-  reconnectPeriod: 5000,
+
+  will: {
+    topic: STATUS_TOPIC,
+    payload: JSON.stringify({
+      online: false,
+      timestamp: new Date().toISOString(),
+    }),
+    qos: 1,
+    retain: true,
+  },
 });
+
+function publishStatus() {
+  const status = {
+    online: true,
+    hostname: "tc180-hotel-demo",
+    ip: "192.168.1.50",
+    firmware: "simulator-1.0.0",
+    timestamp: new Date().toISOString(),
+  };
+
+  client.publish(
+    STATUS_TOPIC,
+    JSON.stringify(status),
+    {
+      qos: 1,
+      retain: true,
+    },
+    (error?: Error) => {
+      if (error) {
+        console.error(
+          "Error enviando heartbeat:",
+          error.message,
+        );
+        return;
+      }
+
+      console.log(
+        `Heartbeat enviado: ${STATUS_TOPIC}`,
+      );
+    },
+  );
+}
 
 client.on("connect", () => {
   console.log("SIMULADOR conectado a HiveMQ");
@@ -53,6 +93,13 @@ client.on("connect", () => {
         "Esperando diagnóstico...",
       );
     },
+  );
+
+  publishStatus();
+
+  setInterval(
+    publishStatus,
+    30_000,
   );
 });
 
