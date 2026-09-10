@@ -404,6 +404,7 @@ diagnosticsRouter.post(
     deviceCode: true,
     name: true,
     online: true,
+    lastSeenAt: true,
   },
 });
 
@@ -418,6 +419,44 @@ if (!agent.deviceCode) {
   return res.status(409).json({
     error:
       "The diagnostic agent does not have a deviceCode",
+  });
+}
+
+const AGENT_HEARTBEAT_TIMEOUT_MS = 90_000;
+
+if (!agent.online) {
+  return res.status(409).json({
+    error:
+      "The diagnostic agent is offline",
+  });
+}
+
+if (!agent.lastSeenAt) {
+  return res.status(409).json({
+    error:
+      "The diagnostic agent has never reported status",
+  });
+}
+
+const heartbeatAgeMs =
+  Date.now() - agent.lastSeenAt.getTime();
+
+if (
+  heartbeatAgeMs >
+  AGENT_HEARTBEAT_TIMEOUT_MS
+) {
+  await prisma.device.update({
+    where: {
+      id: agent.id,
+    },
+    data: {
+      online: false,
+    },
+  });
+
+  return res.status(409).json({
+    error:
+      "The diagnostic agent heartbeat has expired",
   });
 }
 
