@@ -44,3 +44,9 @@ coverage/
 *.db.bak
 *backup*.db
 migration_backup_*/
+
+# PostgreSQL migration snapshot
+/dev.pre-postgresql-migration.db
+
+# SQLite to PostgreSQL migration data
+/sqlite-migration-export.json
