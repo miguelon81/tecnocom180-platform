@@ -25,10 +25,11 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@prisma/adapter-libsql": "7.9.1",
+    "@prisma/adapter-pg": "7.9.1",
     "bcryptjs": "3.0.3",
     "dotenv": "17.4.2",
-    "jsonwebtoken": "9.0.3"
+    "jsonwebtoken": "9.0.3",
+    "pg": "8.23.1"
   },
   "devDependencies": {
     "@types/jsonwebtoken": "9.0.10"
