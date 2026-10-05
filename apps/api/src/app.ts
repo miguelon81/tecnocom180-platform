@@ -16,12 +16,16 @@ import { guestsRouter } from "./routes/guests";
 
 const app = express();
 
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://app.tecnocom180.com",
+];
+
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: allowedOrigins,
   }),
 );
-
 app.use(express.json());
 app.use("/auth", authRouter);
 app.use("/health", healthRouter);
