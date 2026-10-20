@@ -474,6 +474,10 @@ model Device {
 
   telemetry DeviceTelemetry[]
 
+  alertConfig       DeviceAlertConfig?
+  diagnosticEvents  DeviceDiagnosticEvent[]
+  alerts            DeviceAlert[]
+
   @@index([siteId])
   @@index([modelId])
 }
@@ -657,4 +661,72 @@ model DeviceTelemetry {
 
   @@index([deviceId])
   @@index([createdAt])
+}
+// ============================================================
+// DEVICE ALERT CONFIGURATION
+// ============================================================
+
+model DeviceAlertConfig {
+  id String @id @default(uuid())
+
+  deviceId String @unique
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  lowLevelThreshold      Float?
+  recoveryLevelThreshold Float?
+  lowBatteryThreshold    Float?
+
+  enabled Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============================================================
+// DEVICE DIAGNOSTIC EVENTS
+// ============================================================
+
+model DeviceDiagnosticEvent {
+  id String @id @default(uuid())
+
+  deviceId String
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  code      String
+  component String?
+  severity  String @default("WARNING")
+  detail    String?
+  attempts  Int?
+
+  occurredAt DateTime?
+  receivedAt DateTime @default(now())
+
+  @@index([deviceId, receivedAt])
+}
+
+// ============================================================
+// DEVICE ALERTS
+// ============================================================
+
+model DeviceAlert {
+  id String @id @default(uuid())
+
+  deviceId String
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  code    String
+  status  String @default("ACTIVE")
+  message String?
+
+  triggeredValue Float?
+  thresholdValue Float?
+
+  triggeredAt DateTime @default(now())
+  resolvedAt  DateTime?
+
+  acknowledgedAt DateTime?
+  acknowledgedById String?
+
+  @@index([deviceId, status])
+  @@index([triggeredAt])
 }

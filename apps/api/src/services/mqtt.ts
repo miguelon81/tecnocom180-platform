@@ -6,6 +6,8 @@ import {
   type DiagnosticPayload,
 } from "./diagnosticResults";
 
+import { toNullableNumber } from "./telemetryValidation";
+
 const brokerUrl = process.env.MQTT_BROKER_URL;
 const username = process.env.MQTT_USERNAME;
 const password = process.env.MQTT_PASSWORD;
@@ -130,54 +132,27 @@ async function processSensorTelemetry(
       lastSeenAt: new Date(),
     },
   });
-
-  await prisma.deviceTelemetry.create({
-    data: {
-      deviceId: device.id,
-
-      nivel: Number.isFinite(
-        Number(telemetry.nivel),
-      )
-        ? Number(telemetry.nivel)
+const relay1 = toNullableNumber(telemetry.relay1);
+await prisma.deviceTelemetry.create({
+  data: {
+    deviceId: device.id,
+    nivel: toNullableNumber(telemetry.nivel),
+    bateria: toNullableNumber(telemetry.bateria),
+    senal: toNullableNumber(telemetry.senal),
+    recarga: toNullableNumber(telemetry.recarga),
+    consumo: toNullableNumber(telemetry.consumo),
+    relay1:
+      relay1 !== null && Number.isInteger(relay1)
+        ? relay1
         : null,
-
-      bateria: Number.isFinite(
-        Number(telemetry.bateria),
-      )
-        ? Number(telemetry.bateria)
-        : null,
-
-      senal: Number.isFinite(
-        Number(telemetry.senal),
-      )
-        ? Number(telemetry.senal)
-        : null,
-
-      recarga: Number.isFinite(
-        Number(telemetry.recarga),
-      )
-        ? Number(telemetry.recarga)
-        : null,
-
-      consumo: Number.isFinite(
-        Number(telemetry.consumo),
-      )
-        ? Number(telemetry.consumo)
-        : null,
-
-      relay1: Number.isFinite(
-        Number(telemetry.relay1),
-      )
-        ? Number(telemetry.relay1)
-        : null,
-    },
-  });
-
+  },
+});
   console.log(
     `Telemetría guardada: ${deviceCode}`,
   );
 
   void processLevelAlert(
+    device.id,
     deviceCode,
     telemetry,
   );
