@@ -6,6 +6,7 @@ import { getSites } from '../api/sites'
 import { getAreas } from '../api/areas'
 import { getBrands } from '../api/brands'
 import { getModels } from '../api/models'
+import { isDeviceEffectivelyOnline } from '../utils/deviceStatus'
 
 import {
   getLatestTelemetry,
@@ -383,57 +384,6 @@ function isIotDevice(device: Device) {
   return device.model?.type === 'IOT'
 }
 
-function isAgentDevice(device: Device) {
-  return device.model?.type === 'AGENT'
-}
-
-const AGENT_STALE_MS = 90 * 1000
-const IOT_STALE_MS = 5 * 60 * 60 * 1000
-
-function isRecentDate(
-  value: string | null | undefined,
-  maxAgeMs: number,
-) {
-  if (!value) {
-    return false
-  }
-
-  const timestamp = new Date(value).getTime()
-
-  if (Number.isNaN(timestamp)) {
-    return false
-  }
-
-  return Date.now() - timestamp <= maxAgeMs
-}
-
-function isDeviceEffectivelyOnline(
-  device: Device,
-  telemetry?: DeviceTelemetry | null,
-) {
-  if (isAgentDevice(device)) {
-    return (
-      device.online &&
-      isRecentDate(
-        device.lastSeenAt,
-        AGENT_STALE_MS,
-      )
-    )
-  }
-
-  if (isIotDevice(device)) {
-    const lastCommunication =
-      device.lastSeenAt ??
-      telemetry?.createdAt
-
-    return isRecentDate(
-      lastCommunication,
-      IOT_STALE_MS,
-    )
-  }
-
-  return device.online
-}
 
 useEffect(() => {
   let cancelled = false
@@ -2179,19 +2129,19 @@ function getLevelClass(
             </p>
           </div>
 
-          <span
-            className={
-              device.online
-                ? 'device-online-badge device-online'
-                : 'device-online-badge device-offline'
-            }
-          >
-            <span />
-            {device.online
-              ? 'Online'
-              : 'Offline'}
-          </span>
-        </div>
+                <span
+  className={
+    isDeviceEffectivelyOnline(device)
+      ? 'device-online-badge device-online'
+      : 'device-online-badge device-offline'
+  }
+>
+  <span />
+  {isDeviceEffectivelyOnline(device)
+    ? 'Online'
+    : 'Offline'}
+</span>
+ </div>
 
         <div className="device-location">
           <span>

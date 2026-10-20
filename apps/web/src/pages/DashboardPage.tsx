@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 
+import { isDeviceEffectivelyOnline } from '../utils/deviceStatus'
+
 import { getSites } from '../api/sites'
 import type {
   Room,
@@ -322,9 +324,11 @@ function DashboardPage() {
   ])
 
   const onlineDevices =
-    data.devices.filter(
-      (device: Device) =>
-        device.online,
+    data.devices.filter((device) =>
+      isDeviceEffectivelyOnline(
+        device,
+        telemetry[device.id]?.telemetry,
+      ),
     ).length
 
   const offlineDevices =
@@ -641,6 +645,9 @@ function DashboardPage() {
                   state?.telemetry ??
                   null
 
+                const effectivelyOnline =
+                  isDeviceEffectivelyOnline(device, latest)
+
                 const site =
                   data.sites.find(
                     (item) =>
@@ -696,14 +703,14 @@ function DashboardPage() {
                       <div>
                         <span
                           className={
-                            device.online
+                            effectivelyOnline
                               ? 'dot dot-online'
                               : 'dot dot-offline'
                           }
                         />
 
                         <small>
-                          {device.online
+                          {effectivelyOnline
                             ? ' Online'
                             : ' Offline'}
                         </small>
@@ -923,9 +930,12 @@ function DashboardPage() {
                 >
                   <span
                     className={
-                      device.online
-                        ? 'dot dot-online'
-                        : 'dot dot-offline'
+                    isDeviceEffectivelyOnline(
+                      device,
+                      telemetry[device.id]?.telemetry ?? null,
+                    )
+                      ? 'dot dot-online'
+                      : 'dot dot-offline'
                     }
                   />
 

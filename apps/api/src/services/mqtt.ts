@@ -22,15 +22,28 @@ if (!password) {
   throw new Error("MQTT_PASSWORD no está configurado");
 }
 
-const mqttClient = mqtt.connect(brokerUrl, {
-  username,
-  password,
-  clientId: `tecnocom180-api-${Math.random()
-    .toString(16)
-    .slice(2)}`,
-  clean: true,
-  reconnectPeriod: 5000,
-});
+const mqttEnabled =
+  process.env.MQTT_ENABLED !== "false";
+
+const mqttClient = mqtt.connect(
+  mqttEnabled ? brokerUrl : "mqtt://127.0.0.1:1883",
+  {
+    username,
+    password,
+    clientId: `tecnocom180-api-${Math.random()
+      .toString(16)
+      .slice(2)}`,
+    clean: true,
+    reconnectPeriod: mqttEnabled ? 5000 : 0,
+    manualConnect: !mqttEnabled,
+  },
+);
+
+if (!mqttEnabled) {
+  console.log(
+    "MQTT deshabilitado para este entorno",
+  );
+}
 
 // ============================================================
 // TYPES
