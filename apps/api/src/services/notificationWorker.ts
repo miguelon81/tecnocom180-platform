@@ -13,10 +13,46 @@ type ClaimedNotification = {
 const LOCK_SECONDS = 60;
 const MAX_ATTEMPTS = 5;
 
+function validateManualTelegramTest(
+  notificationId?: string,
+): void {
+  if (!notificationId) return;
+
+  const databaseUrl = process.env.DATABASE_URL;
+
+  if (!databaseUrl) {
+    throw new Error("DATABASE_URL no configurada");
+  }
+
+  const connection = new URL(databaseUrl);
+  const database = connection.pathname.slice(1);
+
+  if (
+    database !== "tecnocom180_test" ||
+    connection.hostname !== "127.0.0.1" ||
+    connection.port !== "5434" ||
+    process.env.TELEGRAM_NOTIFICATIONS_ENABLED !== "false" ||
+    process.env.MQTT_ENABLED !== "false"
+  ) {
+    throw new Error(
+      "Envío manual permitido únicamente en tecnocom180_test " +
+      "con Telegram automático y MQTT deshabilitados",
+    );
+  }
+}
+
 export async function claimNextNotification(
   testMode = false,
   testNotificationId?: string,
+  manualNotificationId?: string,
 ): Promise<ClaimedNotification | null> {
+  if (testMode && manualNotificationId) {
+    throw new Error(
+      "No se puede combinar modo simulado con envío manual real",
+    );
+  }
+
+  validateManualTelegramTest(manualNotificationId);
 
   // Protección: nunca procesar si el envío está deshabilitado.
   if (testMode) {
@@ -32,11 +68,12 @@ export async function claimNextNotification(
       "Reserva de prueba permitida únicamente en tecnocom180_test con Telegram deshabilitado",
     );
   }
-} else if (
-  process.env.TELEGRAM_NOTIFICATIONS_ENABLED !== "true"
-) {
-  return null;
-}
+  } else if (
+    !manualNotificationId &&
+    process.env.TELEGRAM_NOTIFICATIONS_ENABLED !== "true"
+  ) {
+    return null;
+  }
 
   if (testMode && !testNotificationId) {
     throw new Error(
@@ -86,7 +123,17 @@ if (recovered.count > 0) {
       SELECT "id"
       FROM "AlertNotification"
       WHERE
-        (${!testMode} OR "id" = ${testNotificationId ?? ""})
+        (
+          (${testMode} AND "id" = ${testNotificationId ?? ""})
+          OR
+          (${Boolean(manualNotificationId)} AND "id" = ${manualNotificationId ?? ""})
+          OR
+          (${!testMode && !Boolean(manualNotificationId)})
+        )
+        AND (
+          NOT ${Boolean(manualNotificationId)}
+          OR "channel" = 'TELEGRAM'
+        )
         AND "attempts" < ${MAX_ATTEMPTS}
          AND (
          (
@@ -130,7 +177,15 @@ export async function processNextNotification(
   sendMessage: typeof sendTelegramMessage = sendTelegramMessage,
   testMode = false,
   testNotificationId?: string,
+  manualNotificationId?: string,
 ): Promise<boolean> {
+  if (testMode && manualNotificationId) {
+    throw new Error(
+      "No se puede combinar modo simulado con envío manual real",
+    );
+  }
+
+  validateManualTelegramTest(manualNotificationId);
   if (testMode) {
   const databaseName = new URL(
     process.env.DATABASE_URL ?? "",
@@ -145,16 +200,18 @@ export async function processNextNotification(
       "Modo de prueba requiere tecnocom180_test, Telegram deshabilitado y un simulador de envío",
     );
   }
-} else if (
-  process.env.TELEGRAM_NOTIFICATIONS_ENABLED !== "true"
-) {
-  return false;
-}
+    } else if (
+      !manualNotificationId &&
+      process.env.TELEGRAM_NOTIFICATIONS_ENABLED !== "true"
+    ) {
+      return false;
+  }
 
   const notification = await claimNextNotification(
-    testMode,
-    testNotificationId,
-  );
+  testMode,
+  testNotificationId,
+  manualNotificationId,
+);
 
   if (!notification) {
     return false;
