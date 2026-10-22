@@ -1202,3 +1202,79 @@ devicesRouter.delete(
 );
 
 export { devicesRouter };
+// ============================================================
+// GET /devices/:id/alert-config
+// ============================================================
+
+devicesRouter.get(
+  "/:id/alert-config",
+  authenticateToken,
+  requireRole(
+    "SUPER_ADMIN",
+    "OPERATIONS",
+    "ORG_ADMIN",
+    "RECEPTION",
+    "TECHNICIAN",
+  ),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const deviceId = getDeviceId(req);
+
+      const device = await prisma.device.findUnique({
+        where: { id: deviceId },
+        select: {
+          id: true,
+          siteId: true,
+          site: {
+            select: {
+              organizationId: true,
+            },
+          },
+        },
+      });
+
+      if (!device) {
+        return res.status(404).json({
+          error: "Device not found",
+        });
+      }
+
+      if (
+        !canAccessOrganization(
+          req,
+          device.site.organizationId,
+        )
+      ) {
+        return res.status(403).json({
+          error: "Access denied for this organization",
+        });
+      }
+
+      if (!(await canAccessSite(req, device.siteId))) {
+        return res.status(403).json({
+          error: "Access denied for this site",
+        });
+      }
+
+      const config = await prisma.deviceAlertConfig.findUnique({
+        where: { deviceId },
+      });
+
+      return res.json({
+        deviceId,
+        enabled: config?.enabled ?? true,
+        lowLevelThreshold: config?.lowLevelThreshold ?? 20,
+        recoveryLevelThreshold:
+          config?.recoveryLevelThreshold ?? 25,
+        lowBatteryThreshold:
+          config?.lowBatteryThreshold ?? null,
+      });
+    } catch (error) {
+      console.error("Error fetching device alert config:", error);
+
+      return res.status(500).json({
+        error: "Failed to fetch device alert config",
+      });
+    }
+  },
+);
