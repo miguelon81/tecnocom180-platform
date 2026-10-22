@@ -13,23 +13,22 @@ const brokerUrl = process.env.MQTT_BROKER_URL;
 const username = process.env.MQTT_USERNAME;
 const password = process.env.MQTT_PASSWORD;
 
-if (!brokerUrl) {
+const mqttEnabled = process.env.MQTT_ENABLED !== "false";
+
+if (mqttEnabled && !brokerUrl) {
   throw new Error("MQTT_BROKER_URL no está configurado");
 }
 
-if (!username) {
+if (mqttEnabled && !username) {
   throw new Error("MQTT_USERNAME no está configurado");
 }
 
-if (!password) {
+if (mqttEnabled && !password) {
   throw new Error("MQTT_PASSWORD no está configurado");
 }
 
-const mqttEnabled =
-  process.env.MQTT_ENABLED !== "false";
-
 const mqttClient = mqtt.connect(
-  mqttEnabled ? brokerUrl : "mqtt://127.0.0.1:1883",
+  mqttEnabled ? brokerUrl! : "mqtt://127.0.0.1:1883",
   {
     username,
     password,
@@ -41,7 +40,6 @@ const mqttClient = mqtt.connect(
     manualConnect: !mqttEnabled,
   },
 );
-
 if (!mqttEnabled) {
   console.log(
     "MQTT deshabilitado para este entorno",

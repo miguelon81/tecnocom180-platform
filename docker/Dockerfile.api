@@ -1,0 +1,55 @@
+﻿# =====================================================
+# TECNOCOM180 API - Node.js 24 + Prisma 7
+# =====================================================
+
+FROM node:24-bookworm-slim AS builder
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY package.json package-lock.json ./
+
+COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
+
+RUN npm ci
+
+COPY tsconfig.json ./
+COPY prisma.config.ts ./
+COPY prisma ./prisma
+COPY apps/api ./apps/api
+
+# Prisma 7: genera el cliente en generated/prisma
+RUN npx prisma generate
+
+# Compilar API y cliente Prisma
+RUN npm run build --workspace @tecnocom180/api
+
+
+# =====================================================
+# Runtime
+# =====================================================
+
+FROM node:24-bookworm-slim AS runtime
+
+ENV NODE_ENV=production
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/apps/api/package.json ./apps/api/package.json
+COPY --from=builder /app/apps/api/dist ./apps/api/dist
+
+EXPOSE 3000
+
+WORKDIR /app/apps/api
+
+CMD ["node", "dist/apps/api/src/index.js"]
