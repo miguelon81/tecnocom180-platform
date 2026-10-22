@@ -1,6 +1,7 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
+  moduleFormat = "cjs"
 }
 
 datasource db {
@@ -727,6 +728,35 @@ model DeviceAlert {
   acknowledgedAt DateTime?
   acknowledgedById String?
 
+  notifications AlertNotification[]
+
   @@index([deviceId, status])
   @@index([triggeredAt])
+}
+model AlertNotification {
+  id String @id @default(uuid())
+
+  alertId String
+  alert   DeviceAlert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+
+  channel   String @default("TELEGRAM")
+  eventType String
+  recipient String
+  message   String
+
+  status   String @default("PENDING")
+  attempts Int    @default(0)
+
+  lastError     String?
+  lastAttemptAt DateTime?
+  nextAttemptAt DateTime?
+  lockedUntil   DateTime?
+  lockToken     String?
+  sentAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([alertId, channel, eventType, recipient])
+  @@index([status, nextAttemptAt])
 }

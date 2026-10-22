@@ -7,6 +7,7 @@ import {
 } from "./diagnosticResults";
 
 import { toNullableNumber } from "./telemetryValidation";
+import { saveDeviceDiagnostic } from "./deviceDiagnostics";
 
 const brokerUrl = process.env.MQTT_BROKER_URL;
 const username = process.env.MQTT_USERNAME;
@@ -151,11 +152,32 @@ await prisma.deviceTelemetry.create({
     `Telemetría guardada: ${deviceCode}`,
   );
 
-  void processLevelAlert(
+  if (telemetry.diagnostico !== undefined) {
+  try {
+    await saveDeviceDiagnostic(
+      device.id,
+      telemetry.diagnostico,
+    );
+  } catch (error) {
+    console.error(
+      `Error guardando diagnóstico de ${deviceCode}:`,
+      error,
+    );
+  }
+}
+
+try {
+  await processLevelAlert(
     device.id,
     deviceCode,
     telemetry,
   );
+} catch (error) {
+  console.error(
+    `Error procesando alerta de ${deviceCode}:`,
+    error,
+  );
+}
 }
 
 // ============================================================

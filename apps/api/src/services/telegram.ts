@@ -1,12 +1,6 @@
 const botToken = process.env.TELEGRAM_BOT_TOKEN;
 const defaultChatId = process.env.TELEGRAM_CHAT_ID;
 
-if (!botToken) {
-  throw new Error("TELEGRAM_BOT_TOKEN no está configurado");
-}
-
-const TELEGRAM_API_URL = `https://api.telegram.org/bot${botToken}`;
-
 type TelegramResponse = {
   ok: boolean;
   description?: string;
@@ -17,11 +11,25 @@ async function sendTelegramMessage(
   text: string,
   chatId = defaultChatId,
 ): Promise<TelegramResponse> {
-  if (!chatId) {
-    throw new Error("TELEGRAM_CHAT_ID no está configurado");
+
+  if (!botToken) {
+    throw new Error(
+      "TELEGRAM_BOT_TOKEN no está configurado",
+    );
   }
 
-  const response = await fetch(`${TELEGRAM_API_URL}/sendMessage`, {
+  if (!chatId) {
+    throw new Error(
+      "TELEGRAM_CHAT_ID no está configurado",
+    );
+  }
+
+  const TELEGRAM_API_URL =
+    `https://api.telegram.org/bot${botToken}`;
+
+ const response = await fetch(
+  `${TELEGRAM_API_URL}/sendMessage`,
+  {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -30,13 +38,18 @@ async function sendTelegramMessage(
       chat_id: chatId,
       text,
     }),
-  });
+    signal: AbortSignal.timeout(15000),
+  },
+);
 
-  const data = (await response.json()) as TelegramResponse;
+  const data =
+    (await response.json()) as TelegramResponse;
 
   if (!response.ok || !data.ok) {
     throw new Error(
-      `Telegram API error: ${data.description ?? response.statusText}`,
+      `Telegram API error: ${
+        data.description ?? response.statusText
+      }`,
     );
   }
 
