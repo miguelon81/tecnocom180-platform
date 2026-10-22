@@ -1201,7 +1201,7 @@ devicesRouter.delete(
   },
 );
 
-export { devicesRouter };
+
 // ============================================================
 // GET /devices/:id/alert-config
 // ============================================================
@@ -1278,3 +1278,5 @@ devicesRouter.get(
     }
   },
 );
+
+export { devicesRouter };
