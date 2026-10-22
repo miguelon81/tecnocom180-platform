@@ -12,5 +12,6 @@
       API_HOST: "0.0.0.0"
       TELEGRAM_NOTIFICATIONS_ENABLED: "false"
       MQTT_ENABLED: "false"
+      NODE_OPTIONS: "--dns-result-order=ipv4first"
 
     stop_grace_period: 35s
