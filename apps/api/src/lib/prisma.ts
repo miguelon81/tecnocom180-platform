@@ -9,6 +9,15 @@ if (!connectionString) {
 
 const adapter = new PrismaPg({
   connectionString,
+
+  // Tiempo máximo para establecer conexión.
+  connectionTimeoutMillis: 5_000,
+
+  // Tiempo máximo de ejecución de consultas SQL.
+  statement_timeout: 10_000,
+
+  // Tiempo máximo de espera por bloqueos PostgreSQL.
+  lock_timeout: 5_000,
 });
 
 const prisma = new PrismaClient({

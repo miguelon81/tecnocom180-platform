@@ -1,11 +1,13 @@
-
 import { processNextNotification } from "./notificationWorker";
 
 const INTERVAL_MS = 10_000;
 
+
 let timer: ReturnType<typeof setTimeout> | null = null;
 let running = false;
 let stopping = false;
+
+let activeCycle: Promise<void> | null = null;
 
 async function runCycle(): Promise<void> {
   if (running || stopping) {
@@ -14,26 +16,39 @@ async function runCycle(): Promise<void> {
 
   running = true;
 
-  try {
-    await processNextNotification();
-  } catch (error) {
-    console.error(
-      "[NotificationWorker] Error de procesamiento:",
-      error,
-    );
-  } finally {
-    running = false;
+  const cycle = (async () => {
+    try {
+      await processNextNotification();
+    } catch (error) {
+      console.error(
+        "[NotificationWorker] Error de procesamiento:",
+        error,
+      );
+    } finally {
+      running = false;
 
-    if (!stopping) {
-      timer = setTimeout(() => {
-        void runCycle();
-      }, INTERVAL_MS);
+      if (!stopping) {
+        timer = setTimeout(() => {
+          timer = null;
+          void runCycle();
+        }, INTERVAL_MS);
+      }
+    }
+  })();
+
+  activeCycle = cycle;
+
+  try {
+    await cycle;
+  } finally {
+    if (activeCycle === cycle) {
+      activeCycle = null;
     }
   }
 }
 
 export function startNotificationWorker(): void {
-  if (timer !== null || running) {
+  if (timer !== null || running || activeCycle !== null) {
     return;
   }
 
@@ -51,7 +66,7 @@ export function startNotificationWorker(): void {
   void runCycle();
 }
 
-export function stopNotificationWorker(): void {
+export async function stopNotificationWorker(): Promise<void> {
   stopping = true;
 
   if (timer !== null) {
@@ -60,4 +75,14 @@ export function stopNotificationWorker(): void {
   }
 
   console.log("[NotificationWorker] Detención solicitada");
+
+  if (activeCycle !== null) {
+    console.log(
+      "[NotificationWorker] Esperando procesamiento en curso...",
+    );
+
+    await activeCycle;
+  }
+
+  console.log("[NotificationWorker] Detenido");
 }
