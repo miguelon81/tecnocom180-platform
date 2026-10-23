@@ -2,6 +2,14 @@
 import type { FormEvent } from 'react'
 
 import { apiFetch } from '../api/client'
+import {
+  getDeviceAlertConfig,
+  updateDeviceAlertConfig,
+} from '../api/deviceAlertConfig'
+
+import type {
+  DeviceAlertConfig,
+} from '../api/deviceAlertConfig'
 import { getSites } from '../api/sites'
 import { getAreas } from '../api/areas'
 import { getBrands } from '../api/brands'
@@ -155,12 +163,26 @@ function DevicesPage() {
 
   const [telemetryError, setTelemetryError] =
     useState<string | null>(null)
+  const [selectedAlertDeviceId, setSelectedAlertDeviceId] =
+    useState<string | null>(null)
 
-const [iotTelemetry, setIotTelemetry] =
-  useState<Record<string, DeviceTelemetry | null>>({})
+  const [alertConfig, setAlertConfig] =
+    useState<DeviceAlertConfig | null>(null)
 
-const [iotTelemetryLoading, setIotTelemetryLoading] =
-  useState<Record<string, boolean>>({})
+  const [alertLoading, setAlertLoading] = useState(false)
+  const [alertSaving, setAlertSaving] = useState(false)
+
+  const [alertError, setAlertError] =
+    useState<string | null>(null)
+
+  const [alertSuccess, setAlertSuccess] =
+    useState<string | null>(null)
+
+  const [iotTelemetry, setIotTelemetry] =
+    useState<Record<string, DeviceTelemetry | null>>({})
+
+  const [iotTelemetryLoading, setIotTelemetryLoading] =
+    useState<Record<string, boolean>>({})
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -548,6 +570,100 @@ useEffect(() => {
     setTelemetryError(null)
   }
 
+async function openAlertConfig(deviceId: string) {
+  setSelectedAlertDeviceId(deviceId)
+  setAlertConfig(null)
+  setAlertError(null)
+  setAlertSuccess(null)
+  setAlertLoading(true)
+
+  try {
+    const config = await getDeviceAlertConfig(deviceId)
+
+    setAlertConfig(config)
+  } catch (err) {
+    setAlertError(
+      err instanceof Error
+        ? err.message
+        : 'No se pudo cargar la configuración de alertas',
+    )
+  } finally {
+    setAlertLoading(false)
+  }
+}
+
+function closeAlertConfig() {
+  if (alertSaving) return
+
+  setSelectedAlertDeviceId(null)
+  setAlertConfig(null)
+  setAlertError(null)
+  setAlertSuccess(null)
+}
+
+async function saveAlertConfig() {
+  if (
+    !selectedAlertDeviceId ||
+    !alertConfig ||
+    !canManageDevices ||
+    alertSaving
+  ) {
+    return
+  }
+
+  const {
+    lowLevelThreshold,
+    recoveryLevelThreshold,
+    enabled,
+  } = alertConfig
+
+  if (
+    !Number.isFinite(lowLevelThreshold) ||
+    !Number.isFinite(recoveryLevelThreshold) ||
+    lowLevelThreshold < 0 ||
+    lowLevelThreshold > 100 ||
+    recoveryLevelThreshold < 0 ||
+    recoveryLevelThreshold > 100
+  ) {
+    setAlertError(
+      'Los umbrales deben estar entre 0 y 100 %',
+    )
+    return
+  }
+
+  if (recoveryLevelThreshold <= lowLevelThreshold) {
+    setAlertError(
+      'El umbral de recuperación debe ser mayor que el nivel bajo',
+    )
+    return
+  }
+
+  try {
+    setAlertSaving(true)
+    setAlertError(null)
+    setAlertSuccess(null)
+
+    const updatedConfig = await updateDeviceAlertConfig(
+      selectedAlertDeviceId,
+      {
+        lowLevelThreshold,
+        recoveryLevelThreshold,
+        enabled,
+      },
+    )
+
+    setAlertConfig(updatedConfig)
+    setAlertSuccess('Configuración guardada correctamente')
+  } catch (err) {
+    setAlertError(
+      err instanceof Error
+        ? err.message
+        : 'No se pudo guardar la configuración de alertas',
+    )
+  } finally {
+    setAlertSaving(false)
+  }
+}
   function handleFormChange(
     field: keyof DeviceForm,
     value: string,
@@ -1821,6 +1937,166 @@ function getLevelClass(
             )}
         </section>
       )}
+      {selectedAlertDeviceId && (
+        <section
+          className="card"
+          style={{ marginBottom: '24px' }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: '16px',
+              flexWrap: 'wrap',
+            }}
+          >
+            <div>
+              <p className="eyebrow">
+                CONFIGURACIÓN DE ALERTAS
+              </p>
+              <h2>
+                {devices.find(
+                  (device) =>
+                    device.id === selectedAlertDeviceId,
+                )?.name ??
+                  devices.find(
+                    (device) =>
+                      device.id === selectedAlertDeviceId,
+                  )?.deviceCode ??
+                  'Dispositivo'}
+              </h2>
+            </div>
+
+            <button
+              type="button"
+              onClick={closeAlertConfig}
+              disabled={alertSaving}
+            >
+              Cerrar
+            </button>
+          </div>
+
+          {alertLoading && (
+            <p>Cargando configuración de alertas...</p>
+          )}
+
+          {alertError && (
+            <div className="error-message">
+              {alertError}
+            </div>
+          )}
+
+          {alertSuccess && (
+            <p role="status">{alertSuccess}</p>
+          )}
+
+            {alertConfig && !alertLoading && (
+            <div className="device-alert-form">
+
+              {/* UMBRALES */}
+              <div className="device-alert-grid">
+                <label className="device-alert-field">
+                  <span>Nivel bajo (%)</span>
+
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    value={alertConfig.lowLevelThreshold}
+                    disabled={!canManageDevices || alertSaving}
+                    onChange={(event) =>
+                      setAlertConfig((current) =>
+                        current
+                          ? {
+                              ...current,
+                              lowLevelThreshold: Number(
+                                event.target.value,
+                              ),
+                            }
+                          : current,
+                      )
+                    }
+                  />
+                </label>
+
+                <label className="device-alert-field">
+                  <span>Recuperación (%)</span>
+
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    value={alertConfig.recoveryLevelThreshold}
+                    disabled={!canManageDevices || alertSaving}
+                    onChange={(event) =>
+                      setAlertConfig((current) =>
+                        current
+                          ? {
+                              ...current,
+                              recoveryLevelThreshold: Number(
+                                event.target.value,
+                              ),
+                            }
+                          : current,
+                      )
+                    }
+                  />
+                </label>
+              </div>
+
+              {/* HABILITACIÓN */}
+              <label className="device-alert-toggle">
+                <input
+                  type="checkbox"
+                  checked={alertConfig.enabled}
+                  disabled={!canManageDevices || alertSaving}
+                  onChange={(event) =>
+                    setAlertConfig((current) =>
+                      current
+                        ? {
+                            ...current,
+                            enabled: event.target.checked,
+                          }
+                        : current,
+                    )
+                  }
+                />
+
+                <span>Alertas habilitadas</span>
+              </label>
+
+              {/* ACCIONES */}
+              {canManageDevices && (
+                <div className="device-alert-actions">
+                  <button
+                    type="button"
+                    disabled={alertSaving}
+                    onClick={() => {
+                      void saveAlertConfig()
+                    }}
+                  >
+                    {alertSaving
+                      ? 'Guardando...'
+                      : 'Guardar configuración'}
+                  </button>
+                </div>
+              )}
+
+              {/* INFORMACIÓN */}
+              <p className="device-alert-help">
+                El umbral de recuperación debe ser mayor
+                que el nivel bajo.
+                Las alertas de batería y los diagnósticos
+                Edge se integrarán posteriormente.
+              </p>
+
+            </div>
+          )}
+        </section>
+      )}
 
       {loading ? (
         <p>
@@ -2079,6 +2355,15 @@ function getLevelClass(
               }
             >
               Telemetría
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+              void openAlertConfig(device.id)
+              }}
+            >
+              Configurar alertas
             </button>
 
             {canManageDevices && (

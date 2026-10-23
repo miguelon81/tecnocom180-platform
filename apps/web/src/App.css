@@ -3197,3 +3197,88 @@ h1 {
 .diagnostics-agent-offline {
   color: #dc2626;
 }
+
+/* =========================================================
+   DEVICE ALERT CONFIGURATION
+========================================================= */
+
+.device-alert-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.device-alert-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.device-alert-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #374151;
+}
+
+.device-alert-field input {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid #d1d5db;
+  border-radius: 9px;
+  background: #fff;
+  color: #111827;
+  font: inherit;
+  font-size: 14px;
+}
+
+.device-alert-field input:focus {
+  outline: none;
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 3px rgb(59 130 246 / 12%);
+}
+
+.device-alert-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.device-alert-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: #2563eb;
+}
+
+.device-alert-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.device-alert-actions button {
+  width: auto;
+  min-height: 40px;
+  padding: 10px 18px;
+}
+
+.device-alert-help {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #6b7280;
+}
+
+@media (max-width: 720px) {
+  .device-alert-grid {
+    grid-template-columns: 1fr;
+  }
+}
