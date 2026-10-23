@@ -254,7 +254,10 @@ roomsRouter.post(
           areaId: areaId ?? null,
           number,
           floor: floor ?? null,
-          status: status ?? "AVAILABLE",
+            status:
+              req.user!.role === "OPERATIONS"
+                ? "AVAILABLE"
+                : (status ?? "AVAILABLE"),
         },
         include: roomInclude,
       });

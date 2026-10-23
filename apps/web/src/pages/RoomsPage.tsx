@@ -153,10 +153,12 @@ function RoomsPage() {
 
   const canManageRooms =
     role === 'SUPER_ADMIN' ||
-    role === 'ORG_ADMIN'
+    role === 'ORG_ADMIN' ||
+    role === 'OPERATIONS'
 
   const canChangeRoomStatus =
-    canManageRooms ||
+    role === 'SUPER_ADMIN' ||
+    role === 'ORG_ADMIN' ||
     role === 'RECEPTION' ||
     role === 'TECHNICIAN'
 
@@ -351,10 +353,11 @@ function RoomsPage() {
             number: form.number.trim(),
             areaId: form.areaId || null,
             floor,
-            status: form.status,
+            ...(role !== 'OPERATIONS'
+              ? { status: form.status }
+              : {}),
           },
         )
-
         setRooms((current) =>
           current
             .map((room) =>
@@ -698,36 +701,36 @@ function RoomsPage() {
                       placeholder="1"
                     />
                   </label>
+                  {role !== 'OPERATIONS' && (
+                    <label>
+                      Estado
+                      <select
+                        value={form.status}
+                        onChange={(event) =>
+                          handleChange(
+                            'status',
+                            event.target.value,
+                          )
+                        }
+                      >
+                        <option value="AVAILABLE">
+                          Disponible
+                        </option>
 
-                  <label>
-                    Estado
+                        <option value="OCCUPIED">
+                          Ocupada
+                        </option>
 
-                    <select
-                      value={form.status}
-                      onChange={(event) =>
-                        handleChange(
-                          'status',
-                          event.target.value,
-                        )
-                      }
-                    >
-                      <option value="AVAILABLE">
-                        Disponible
-                      </option>
+                        <option value="MAINTENANCE">
+                          Mantenimiento
+                        </option>
 
-                      <option value="OCCUPIED">
-                        Ocupada
-                      </option>
-
-                      <option value="MAINTENANCE">
-                        Mantenimiento
-                      </option>
-
-                      <option value="CLEANING">
-                        Limpieza
-                      </option>
-                    </select>
-                  </label>
+                        <option value="CLEANING">
+                          Limpieza
+                        </option>
+                      </select>
+                    </label>
+                  )}
                 </div>
 
                 <div
