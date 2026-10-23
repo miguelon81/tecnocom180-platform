@@ -25,7 +25,12 @@ import GuestWifiPage from './pages/GuestWifiPage'
 import './App.css'
 
 function App() {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, user } = useAuth()
+
+  const canAccessGuests =
+    user?.role === 'SUPER_ADMIN' ||
+    user?.role === 'ORG_ADMIN' ||
+    user?.role === 'RECEPTION'
 
   return (
     <BrowserRouter>
@@ -66,12 +71,15 @@ function App() {
         <Route
           path="/guests"
           element={
-            isAuthenticated ? (
+            isAuthenticated && canAccessGuests ? (
               <AppLayout>
                 <GuestsPage />
               </AppLayout>
             ) : (
-              <Navigate to="/login" replace />
+              <Navigate
+                to={isAuthenticated ? '/dashboard' : '/login'}
+                replace
+              />
             )
           }
         />

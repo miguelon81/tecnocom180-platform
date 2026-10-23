@@ -144,13 +144,11 @@ function AppLayout({ children }: AppLayoutProps) {
               HUÉSPEDES
               SUPER_ADMIN
               ORG_ADMIN
-              OPERATIONS
               RECEPTION
           ===================================================== */}
 
           {(isSuperAdmin ||
             isOrgAdmin ||
-            isOperations ||
             user?.role === 'RECEPTION') && (
             <NavLink
               to="/guests"

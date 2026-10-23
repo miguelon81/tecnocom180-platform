@@ -120,7 +120,6 @@ guestsRouter.get(
   requireRole(
     "SUPER_ADMIN",
     "ORG_ADMIN",
-    "OPERATIONS",
     "RECEPTION",
   ),
   async (req: AuthenticatedRequest, res) => {
@@ -179,7 +178,6 @@ guestsRouter.get(
   requireRole(
     "SUPER_ADMIN",
     "ORG_ADMIN",
-    "OPERATIONS",
     "RECEPTION",
   ),
   async (req: AuthenticatedRequest, res) => {
@@ -239,7 +237,6 @@ guestsRouter.post(
   requireRole(
     "SUPER_ADMIN",
     "ORG_ADMIN",
-    "OPERATIONS",
     "RECEPTION",
   ),
   async (req: AuthenticatedRequest, res) => {
@@ -475,7 +472,6 @@ guestsRouter.post(
   requireRole(
     "SUPER_ADMIN",
     "ORG_ADMIN",
-    "OPERATIONS",
     "RECEPTION",
   ),
   async (req: AuthenticatedRequest, res) => {
@@ -538,7 +534,6 @@ guestsRouter.post(
   requireRole(
     "SUPER_ADMIN",
     "ORG_ADMIN",
-    "OPERATIONS",
     "RECEPTION",
   ),
   async (req: AuthenticatedRequest, res) => {
@@ -747,7 +742,6 @@ guestsRouter.post(
   requireRole(
     "SUPER_ADMIN",
     "ORG_ADMIN",
-    "OPERATIONS",
     "RECEPTION",
   ),
   async (req: AuthenticatedRequest, res) => {
@@ -972,7 +966,6 @@ guestsRouter.post(
   requireRole(
     "SUPER_ADMIN",
     "ORG_ADMIN",
-    "OPERATIONS",
     "RECEPTION",
   ),
   async (req: AuthenticatedRequest, res) => {
@@ -1070,7 +1063,6 @@ guestsRouter.post(
   requireRole(
     "SUPER_ADMIN",
     "ORG_ADMIN",
-    "OPERATIONS",
     "RECEPTION",
   ),
   async (req: AuthenticatedRequest, res) => {
@@ -1178,7 +1170,6 @@ guestsRouter.post(
   requireRole(
     "SUPER_ADMIN",
     "ORG_ADMIN",
-    "OPERATIONS",
     "RECEPTION",
   ),
   async (req: AuthenticatedRequest, res) => {
@@ -1268,7 +1259,6 @@ guestsRouter.post(
   requireRole(
     "SUPER_ADMIN",
     "ORG_ADMIN",
-    "OPERATIONS",
     "RECEPTION",
   ),
   async (req: AuthenticatedRequest, res) => {

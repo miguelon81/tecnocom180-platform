@@ -224,7 +224,7 @@ sitesRouter.get(
 sitesRouter.post(
   "/",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN"),
+  requireRole("SUPER_ADMIN", "OPERATIONS", "ORG_ADMIN"),
   async (req: AuthenticatedRequest, res) => {
     try {
       const {
@@ -247,7 +247,7 @@ sitesRouter.post(
       // SUPER_ADMIN puede elegir la organización.
       // ORG_ADMIN siempre queda limitado a su propia organización.
       const targetOrganizationId =
-        req.user!.role === "SUPER_ADMIN"
+        isGlobalRole(req)
           ? organizationId
           : req.user!.organizationId;
 
@@ -319,7 +319,7 @@ sitesRouter.post(
 sitesRouter.patch(
   "/:id",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN"),
+  requireRole("SUPER_ADMIN", "OPERATIONS", "ORG_ADMIN"),
   async (req: AuthenticatedRequest, res) => {
     try {
       const siteId = Array.isArray(req.params.id)
@@ -452,7 +452,7 @@ sitesRouter.patch(
 sitesRouter.delete(
   "/:id",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN"),
+  requireRole("SUPER_ADMIN", "OPERATIONS", "ORG_ADMIN"),
   async (req: AuthenticatedRequest, res) => {
     try {
       const siteId = Array.isArray(req.params.id)

@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 
 import {
@@ -60,9 +60,12 @@ export default function SitesPage() {
   const [form, setForm] = useState<SiteForm>(EMPTY_FORM)
 
   const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
+  const isOperations = currentUser?.role === 'OPERATIONS'
   const isOrgAdmin = currentUser?.role === 'ORG_ADMIN'
 
-  const canManageSites = isSuperAdmin || isOrgAdmin
+  const hasGlobalSiteAccess = isSuperAdmin || isOperations
+
+  const canManageSites = hasGlobalSiteAccess || isOrgAdmin
 
   /*
    * Carga de sitios.
@@ -95,7 +98,7 @@ export default function SitesPage() {
    * organizaciones.
    */
   async function loadOrganizations() {
-    if (!isSuperAdmin) {
+    if (!hasGlobalSiteAccess) {
       return
     }
 
@@ -122,7 +125,7 @@ export default function SitesPage() {
 
   useEffect(() => {
     void loadOrganizations()
-  }, [isSuperAdmin])
+  }, [hasGlobalSiteAccess])
 
   /*
    * En teoría el backend ya devuelve los sitios correctos.
@@ -136,14 +139,14 @@ export default function SitesPage() {
       return []
     }
 
-    if (isSuperAdmin) {
+    if (hasGlobalSiteAccess) {
       return sites
     }
 
     return sites.filter(
       (site) => site.organizationId === currentUser.organizationId,
     )
-  }, [sites, currentUser, isSuperAdmin])
+  }, [sites, currentUser, hasGlobalSiteAccess])
 
   function resetForm() {
     setForm({
@@ -182,7 +185,7 @@ export default function SitesPage() {
      * ORG_ADMIN no puede editar sitios de otra organización.
      */
     if (
-      !isSuperAdmin &&
+      !hasGlobalSiteAccess &&
       site.organizationId !== currentUser?.organizationId
     ) {
       setError(
@@ -243,7 +246,7 @@ export default function SitesPage() {
      * Aunque alguien manipule el frontend, nunca permitimos
      * enviar otra organización.
      */
-    const organizationId = isSuperAdmin
+    const organizationId = hasGlobalSiteAccess
       ? form.organizationId
       : currentUser.organizationId
 
@@ -256,7 +259,7 @@ export default function SitesPage() {
      * Validación adicional para SUPER_ADMIN.
      */
     if (
-      isSuperAdmin &&
+      hasGlobalSiteAccess &&
       !organizations.some(
         (organization) => organization.id === organizationId,
       )
@@ -269,7 +272,7 @@ export default function SitesPage() {
      * ORG_ADMIN solamente puede trabajar dentro de su organización.
      */
     if (
-      !isSuperAdmin &&
+      !hasGlobalSiteAccess &&
       organizationId !== currentUser.organizationId
     ) {
       setError(
@@ -328,7 +331,7 @@ await refreshSites()
     }
 
     if (
-      !isSuperAdmin &&
+      !hasGlobalSiteAccess &&
       site.organizationId !== currentUser?.organizationId
     ) {
       setError(
@@ -362,7 +365,7 @@ await refreshSites()
     }
 
     if (
-      !isSuperAdmin &&
+      !hasGlobalSiteAccess &&
       site.organizationId !== currentUser?.organizationId
     ) {
       setError(
@@ -435,7 +438,7 @@ await refreshSites()
           <h1>Sitios</h1>
 
           <p>
-            {isSuperAdmin
+            {hasGlobalSiteAccess
               ? 'Administra ubicaciones de todas las organizaciones.'
               : 'Administra las ubicaciones disponibles dentro de tu organización.'}
           </p>
@@ -504,7 +507,7 @@ await refreshSites()
           onSubmit={handleSubmit}
           className="site-form-grid"
         >
-          {isSuperAdmin && !editingSite && (
+          {hasGlobalSiteAccess && !editingSite && (
             <label className="site-form-field site-form-field-full">
               <span>Organización</span>
 
@@ -542,7 +545,7 @@ await refreshSites()
             </label>
           )}
 
-          {!isSuperAdmin && (
+          {!hasGlobalSiteAccess && (
             <div className="site-form-context site-form-field-full">
               <span>Organización</span>
               <strong>
@@ -701,7 +704,7 @@ await refreshSites()
         </form>
       </section>
     )}
-  
+
 {visibleSites.length === 0 ? (
   <section className="sites-empty">
     <strong>No hay sitios disponibles</strong>
@@ -747,7 +750,7 @@ await refreshSites()
 
               <h2>{site.name}</h2>
 
-              {isSuperAdmin && (
+              {hasGlobalSiteAccess && (
                 <div className="site-organization">
                   {getOrganizationName(site)}
                 </div>
@@ -865,9 +868,8 @@ await refreshSites()
     })}
   </div>
 )}
-        
-      
+
+
         </main>
    )
 }
-    

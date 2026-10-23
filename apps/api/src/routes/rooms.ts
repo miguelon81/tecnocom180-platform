@@ -28,7 +28,10 @@ function canAccessOrganization(
     return false;
   }
 
-  if (req.user.role === "SUPER_ADMIN") {
+  if (
+    req.user.role === "SUPER_ADMIN" ||
+    req.user.role === "OPERATIONS"
+  ) {
     return true;
   }
 
@@ -42,6 +45,7 @@ roomsRouter.get(
   authenticateToken,
   requireRole(
     "SUPER_ADMIN",
+    "OPERATIONS",
     "ORG_ADMIN",
     "RECEPTION",
     "TECHNICIAN",
@@ -76,7 +80,10 @@ roomsRouter.get(
         }
 
         organizationId = site.organizationId;
-      } else if (req.user!.role !== "SUPER_ADMIN") {
+      } else if (
+        req.user!.role !== "SUPER_ADMIN" &&
+        req.user!.role !== "OPERATIONS"
+      ) {
         organizationId = req.user!.organizationId;
       }
 
@@ -120,6 +127,7 @@ roomsRouter.get(
   authenticateToken,
   requireRole(
     "SUPER_ADMIN",
+    "OPERATIONS",
     "ORG_ADMIN",
     "RECEPTION",
     "TECHNICIAN",
@@ -167,7 +175,7 @@ roomsRouter.get(
 roomsRouter.post(
   "/",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN"),
+  requireRole("SUPER_ADMIN", "OPERATIONS", "ORG_ADMIN"),
   async (req: AuthenticatedRequest, res) => {
     try {
       const {
@@ -291,6 +299,7 @@ roomsRouter.patch(
   authenticateToken,
   requireRole(
     "SUPER_ADMIN",
+    "OPERATIONS",
     "ORG_ADMIN",
     "RECEPTION",
     "TECHNICIAN",
@@ -328,7 +337,13 @@ roomsRouter.patch(
           error: "Room not found",
         });
       }
-const role = req.user!.role;
+    const role = req.user!.role;
+    // OPERATIONS administra infraestructura, no ocupación hotelera.
+    if (role === "OPERATIONS" && status !== undefined) {
+      return res.status(403).json({
+        error: "Operations cannot modify room occupancy status",
+      });
+    }
 
 if (role === "RECEPTION") {
   if (
@@ -475,7 +490,7 @@ if (role === "TECHNICIAN") {
 roomsRouter.delete(
   "/:id",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN"),
+  requireRole("SUPER_ADMIN", "OPERATIONS", "ORG_ADMIN"),
   async (req: AuthenticatedRequest, res) => {
     try {
       const roomId = Array.isArray(req.params.id)

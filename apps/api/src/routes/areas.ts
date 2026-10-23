@@ -22,9 +22,12 @@ function canAccessOrganization(
     return false;
   }
 
-  if (req.user.role === "SUPER_ADMIN") {
-    return true;
-  }
+ if (
+  req.user.role === "SUPER_ADMIN" ||
+  req.user.role === "OPERATIONS"
+) {
+  return true;
+}
 
   return req.user.organizationId === organizationId;
 }
@@ -36,6 +39,7 @@ areasRouter.get(
   authenticateToken,
   requireRole(
     "SUPER_ADMIN",
+    "OPERATIONS",
     "ORG_ADMIN",
     "RECEPTION",
     "TECHNICIAN",
@@ -72,10 +76,12 @@ areasRouter.get(
         }
 
         organizationId = site.organizationId;
-      } else if (req.user!.role !== "SUPER_ADMIN") {
+        } else if (
+          req.user!.role !== "SUPER_ADMIN" &&
+           req.user!.role !== "OPERATIONS"
+        ) {
         organizationId = req.user!.organizationId;
       }
-
       const areas = await prisma.area.findMany({
         where: siteId
           ? {
@@ -111,6 +117,7 @@ areasRouter.get(
   authenticateToken,
   requireRole(
     "SUPER_ADMIN",
+    "OPERATIONS",
     "ORG_ADMIN",
     "RECEPTION",
     "TECHNICIAN",
@@ -155,7 +162,7 @@ areasRouter.get(
 areasRouter.post(
   "/",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN"),
+  requireRole("SUPER_ADMIN", "OPERATIONS", "ORG_ADMIN"),
   async (req: AuthenticatedRequest, res) => {
     try {
       const {
@@ -239,7 +246,7 @@ areasRouter.post(
 areasRouter.patch(
   "/:id",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN"),
+  requireRole("SUPER_ADMIN", "OPERATIONS", "ORG_ADMIN"),
   async (req: AuthenticatedRequest, res) => {
     try {
       const areaId = Array.isArray(req.params.id)
@@ -391,7 +398,7 @@ areasRouter.patch(
 areasRouter.delete(
   "/:id",
   authenticateToken,
-  requireRole("SUPER_ADMIN", "ORG_ADMIN"),
+  requireRole("SUPER_ADMIN", "OPERATIONS", "ORG_ADMIN"),
   async (req: AuthenticatedRequest, res) => {
     try {
       const areaId = Array.isArray(req.params.id)

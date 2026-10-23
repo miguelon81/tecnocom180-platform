@@ -9,11 +9,11 @@ import {
 const organizationsRouter = Router();
 
 // GET /organizations
-// SUPER_ADMIN only
+// SUPER_ADMIN y OPERATIONS: consulta global
 organizationsRouter.get(
   "/",
   authenticateToken,
-  requireRole("SUPER_ADMIN"),
+  requireRole("SUPER_ADMIN", "OPERATIONS"),
   async (_req: AuthenticatedRequest, res) => {
     try {
       const organizations = await prisma.organization.findMany({
