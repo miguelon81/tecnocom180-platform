@@ -1278,5 +1278,205 @@ devicesRouter.get(
     }
   },
 );
+// ============================================================
+// PUT /devices/:id/alert-config
+// ============================================================
+
+devicesRouter.put(
+  "/:id/alert-config",
+  authenticateToken,
+  requireRole(
+    "SUPER_ADMIN",
+    "OPERATIONS",
+    "ORG_ADMIN",
+  ),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const deviceId = getDeviceId(req);
+
+      const device = await prisma.device.findUnique({
+        where: { id: deviceId },
+        select: {
+          id: true,
+          siteId: true,
+          site: {
+            select: {
+              organizationId: true,
+            },
+          },
+        },
+      });
+
+      if (!device) {
+        return res.status(404).json({
+          error: "Device not found",
+        });
+      }
+
+      if (
+        !canAccessOrganization(
+          req,
+          device.site.organizationId,
+        )
+      ) {
+        return res.status(403).json({
+          error: "Access denied for this organization",
+        });
+      }
+
+      if (!(await canAccessSite(req, device.siteId))) {
+        return res.status(403).json({
+          error: "Access denied for this site",
+        });
+      }
+
+      const body = req.body;
+
+      if (
+        !body ||
+        typeof body !== "object" ||
+        Array.isArray(body)
+      ) {
+        return res.status(400).json({
+          error: "Invalid request body",
+        });
+      }
+
+      const fields = [
+        "lowLevelThreshold",
+        "recoveryLevelThreshold",
+        "lowBatteryThreshold",
+        "enabled",
+      ] as const;
+
+      if (
+        Object.keys(body).some(
+          (key) => !fields.includes(key as typeof fields[number]),
+        )
+      ) {
+        return res.status(400).json({
+          error: "Unknown alert configuration field",
+        });
+      }
+
+      if (Object.keys(body).length === 0) {
+        return res.status(400).json({
+          error: "At least one field is required",
+        });
+      }
+
+      const existing = await prisma.deviceAlertConfig.findUnique({
+        where: { deviceId },
+      });
+
+      const {
+        lowLevelThreshold,
+        recoveryLevelThreshold,
+        lowBatteryThreshold,
+        enabled,
+      } = body;
+
+      for (const [name, value] of [
+        ["lowLevelThreshold", lowLevelThreshold],
+        ["recoveryLevelThreshold", recoveryLevelThreshold],
+        ["lowBatteryThreshold", lowBatteryThreshold],
+      ] as const) {
+        if (
+          value !== undefined &&
+          value !== null &&
+          (
+            typeof value !== "number" ||
+            !Number.isFinite(value) ||
+            value < 0 ||
+            value > 100
+          )
+        ) {
+          return res.status(400).json({
+            error: `${name} must be between 0 and 100`,
+          });
+        }
+      }
+
+      if (
+        enabled !== undefined &&
+        typeof enabled !== "boolean"
+      ) {
+        return res.status(400).json({
+          error: "enabled must be a boolean",
+        });
+      }
+
+      const nextLow =
+        lowLevelThreshold === undefined
+          ? (existing?.lowLevelThreshold ?? 20)
+          : (lowLevelThreshold ?? 20);
+
+      const nextRecovery =
+        recoveryLevelThreshold === undefined
+          ? (existing?.recoveryLevelThreshold ?? 25)
+          : (recoveryLevelThreshold ?? 25);
+
+      if (nextRecovery <= nextLow) {
+        return res.status(400).json({
+          error:
+            "recoveryLevelThreshold must be greater than lowLevelThreshold",
+        });
+      }
+
+      const updateData = {
+        ...(lowLevelThreshold !== undefined
+          ? { lowLevelThreshold }
+          : {}),
+        ...(recoveryLevelThreshold !== undefined
+          ? { recoveryLevelThreshold }
+          : {}),
+        ...(lowBatteryThreshold !== undefined
+          ? { lowBatteryThreshold }
+          : {}),
+        ...(enabled !== undefined
+          ? { enabled }
+          : {}),
+      };
+
+      const config = await prisma.deviceAlertConfig.upsert({
+        where: { deviceId },
+        create: {
+          deviceId,
+          lowLevelThreshold:
+            lowLevelThreshold === undefined
+              ? 20
+              : lowLevelThreshold,
+          recoveryLevelThreshold:
+            recoveryLevelThreshold === undefined
+              ? 25
+              : recoveryLevelThreshold,
+          lowBatteryThreshold:
+            lowBatteryThreshold === undefined
+              ? null
+              : lowBatteryThreshold,
+          enabled: enabled ?? true,
+        },
+        update: updateData,
+      });
+
+      return res.json({
+        deviceId,
+        enabled: config.enabled,
+        lowLevelThreshold:
+          config.lowLevelThreshold ?? 20,
+        recoveryLevelThreshold:
+          config.recoveryLevelThreshold ?? 25,
+        lowBatteryThreshold:
+          config.lowBatteryThreshold,
+      });
+    } catch (error) {
+      console.error("Error updating device alert config:", error);
+
+      return res.status(500).json({
+        error: "Failed to update device alert config",
+      });
+    }
+  },
+);
 
 export { devicesRouter };
