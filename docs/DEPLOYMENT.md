@@ -1145,3 +1145,245 @@ No reiniciar PostgreSQL ni Mosquitto como parte de una actualización ordinaria 
 - Código candidato publicado en GitHub.
 - Despliegue de la nueva versión pendiente.
 - Pendiente verificar `prisma.config.ts`, dependencias y ejecución controlada de migraciones.
+## 17. Despliegue a producción del 24 de octubre de 2026
+
+### 17.1 Resultado del despliegue
+
+**Estado: DESPLEGADO Y VALIDADO**
+
+- Commit desplegado: `db3ce46`.
+- Rama: `feature/postgresql-production`.
+- API: Node.js 24, ejecutada mediante systemd.
+- Frontend: React/Vite servido mediante Nginx.
+- Base de datos: PostgreSQL 18.
+- MQTT: conectado a HiveMQ Cloud.
+- Telegram automático: deshabilitado.
+
+Se validaron el inicio de sesión, la recepción de telemetría, la configuración de alertas y la persistencia en PostgreSQL.
+
+### 17.2 Arquitectura utilizada
+
+API activa:
+
+`/opt/tecnocom180/releases/db3ce46`
+
+Servicio:
+
+`tecnocom180-api.service`
+
+Archivo de configuración de producción:
+
+`/opt/tecnocom180/app/.env`
+
+Frontend publicado:
+
+`/opt/tecnocom180/app/apps/web/dist`
+
+Esta última ruta es un enlace simbólico hacia:
+
+`/opt/tecnocom180/releases/db3ce46/apps/web/dist`
+
+Nginx utiliza dos dominios principales:
+
+- `api.tecnocom180.com`: API Express mediante proxy hacia `127.0.0.1:3000`.
+- `app.tecnocom180.com`: frontend React.
+
+PostgreSQL y Mosquitto continúan ejecutándose en Docker. El broker MQTT utilizado por la API durante este despliegue sigue siendo HiveMQ Cloud.
+
+### 17.3 Preparación de versiones
+
+Se utilizó Git Worktree para preparar la nueva versión sin modificar el repositorio anterior.
+
+Comando de referencia:
+
+```bash
+git fetch origin
+
+git worktree add --detach \
+  /opt/tecnocom180/releases/db3ce46 \
+  db3ce46
+```
+
+Posteriormente:
+
+```bash
+cd /opt/tecnocom180/releases/db3ce46
+
+npm ci
+
+npm audit --audit-level=high
+```
+
+Resultado: cero vulnerabilidades reportadas.
+
+### 17.4 Generación Prisma y compilación
+
+Generar Prisma Client:
+
+```bash
+DATABASE_URL='postgresql://placeholder:placeholder@127.0.0.1:5432/tecnocom180_test?schema=public' \
+  ./node_modules/.bin/prisma generate
+```
+
+Compilar la API:
+
+```bash
+npm run build --workspace=@tecnocom180/api
+```
+
+Para consultar las migraciones pendientes utilizando la configuración real de producción:
+
+```bash
+node --env-file=/opt/tecnocom180/app/.env \
+  ./node_modules/prisma/build/index.js migrate status
+```
+
+Se identificaron cinco migraciones pendientes y se revisó previamente su contenido SQL.
+
+### 17.5 Respaldo y migraciones
+
+Respaldo final anterior al despliegue:
+
+`/opt/tecnocom180/backups/postgres/tecnocom180-final-20261024-005337.dump`
+
+El archivo se verificó inicialmente mediante `pg_restore --list` usando Docker PostgreSQL 18.
+
+Durante la ventana de mantenimiento se detuvo únicamente la API.
+
+Se ejecutó:
+
+```bash
+cd /opt/tecnocom180/releases/db3ce46
+
+node --env-file=/opt/tecnocom180/app/.env \
+  ./node_modules/prisma/build/index.js migrate deploy
+```
+
+Resultado:
+
+**All migrations have been successfully applied.**
+
+Se aplicaron las cinco migraciones correspondientes a alertas, diagnósticos, notificaciones y bloqueo del trabajador Telegram.
+
+No se reiniciaron PostgreSQL ni Mosquitto.
+
+### 17.6 Actualización de systemd
+
+Se respaldó la unidad anterior:
+
+`/etc/systemd/system/tecnocom180-api.service.predeploy-20261023`
+
+La unidad nueva utiliza:
+
+```ini
+WorkingDirectory=/opt/tecnocom180/releases/db3ce46
+
+ExecStart=/usr/bin/node --dns-result-order=ipv4first --env-file=/opt/tecnocom180/app/.env /opt/tecnocom180/releases/db3ce46/node_modules/tsx/dist/cli.mjs /opt/tecnocom180/releases/db3ce46/apps/api/src/index.ts
+```
+
+Después del cambio se ejecutaron:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl reset-failed tecnocom180-api.service
+sudo systemctl start tecnocom180-api.service
+```
+
+La nueva API arrancó correctamente.
+
+La interrupción observada entre los eventos de parada y arranque del servicio fue de aproximadamente 1 minuto y 55 segundos.
+
+### 17.7 Requisito crítico: VITE_API_URL
+
+**IMPORTANTE PARA TODOS LOS DESPLIEGUES FUTUROS**
+
+El frontend utiliza:
+
+`import.meta.env.VITE_API_URL`
+
+Esta variable debe definirse durante la compilación de producción.
+
+Comando correcto:
+
+```bash
+cd /opt/tecnocom180/releases/db3ce46
+
+VITE_API_URL=https://api.tecnocom180.com \
+  npm run build --workspace=@tecnocom180/web
+```
+
+Si se omite, el navegador puede enviar solicitudes incorrectas como:
+
+`https://app.tecnocom180.com/undefined/auth/login`
+
+Esto produce:
+
+**HTTP 405 Method Not Allowed — Nginx**
+
+El error se corrigió reconstruyendo el frontend con `VITE_API_URL` configurada.
+
+La compilación corregida generó:
+
+`index-BjVa4hnL.js`
+
+Se verificó su publicación mediante una solicitud HTTP al dominio `app.tecnocom180.com`.
+
+**Nunca publicar un frontend sin verificar primero esta variable.**
+
+### 17.8 Publicación del frontend
+
+Nginx sirve:
+
+`/opt/tecnocom180/app/apps/web/dist`
+
+El frontend anterior se conservó en:
+
+`/opt/tecnocom180/app/apps/web/dist-predeploy-20261024`
+
+También se creó un respaldo independiente:
+
+`/opt/tecnocom180/backups/web/frontend-predeploy-20261024-011525`
+
+La publicación se realizó usando un enlace simbólico hacia el directorio `dist` de la nueva versión.
+
+Para futuros despliegues, preparar el directorio y validar la compilación antes de cambiar el enlace. Evitar reconstruir directamente un `dist` que ya esté publicado; preparar primero una compilación independiente para realizar el cambio con la menor interrupción posible.
+
+### 17.9 Verificaciones finales
+
+Se comprobó:
+
+- API activa y respondiendo solicitudes HTTP.
+- Login funcional con `SUPER_ADMIN`.
+- MQTT conectado a HiveMQ Cloud.
+- Agente Raspberry `TC180-AG-000001` reportando ONLINE.
+- Recepción y persistencia de telemetría de dispositivos IoT.
+- Formulario **Configurar alertas** visible y funcional.
+- Guardado de umbrales mediante la API.
+- Persistencia de umbrales en PostgreSQL.
+- Telegram automático deshabilitado.
+
+Dispositivos cuya telemetría posterior al despliegue fue comprobada:
+
+- `TC180-000001`
+- `TC180-000003`
+- `TC180-000005`
+- `TC180-000006`
+
+Se realizó una prueba de modificación de umbrales sobre `TC180-000005`, y después fueron restaurados a:
+
+- Nivel bajo: 20 %.
+- Recuperación: 25 %.
+- Alertas habilitadas: `true`.
+
+Los valores restaurados se verificaron directamente en PostgreSQL.
+
+### 17.10 Pendientes
+
+1. Implementar destinatarios Telegram por organización, sitio y, cuando corresponda, dispositivo.
+2. Validar la generación y resolución de alertas mediante telemetría real.
+3. Revisar las notificaciones pendientes antes de habilitar el trabajador Telegram.
+4. Completar las pruebas de recuperación de respaldo PostgreSQL en un entorno aislado.
+5. Planificar la migración definitiva de HiveMQ Cloud a Mosquitto propio.
+6. Incorporar diagnósticos Edge de Wi-Fi, MQTT y sensores.
+
+**Conclusión:** el despliegue `db3ce46` quedó funcionando en producción, con API, frontend, PostgreSQL y telemetría validados. Las notificaciones Telegram automáticas siguen deshabilitadas hasta implementar el aislamiento de destinatarios.
