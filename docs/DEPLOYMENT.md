@@ -979,3 +979,169 @@ Después determinar si corresponde actualizar:
 **Principio operativo:** desarrollo local, pruebas aisladas, control de versiones, despliegue selectivo y verificación posterior.
 
 El objetivo es mantener TECNOCOM180 funcionando mientras la plataforma evoluciona.
+
+---
+
+## 16. Auditoría de producción y despliegue de alertas IoT — octubre de 2026
+
+### 16.1 Arquitectura comprobada
+
+- VPS Ubuntu: `/opt/tecnocom180`.
+- Repositorio de la aplicación: `/opt/tecnocom180/app`.
+- Rama de despliegue: `feature/postgresql-production`.
+- API Node.js ejecutada mediante `tecnocom180-api.service` (systemd).
+- PostgreSQL 18 en contenedor `tecnocom180-postgres`.
+- Mosquitto en contenedor `tecnocom180-mosquitto`.
+- Base de producción: `tecnocom180`.
+- Base de pruebas: `tecnocom180_test`.
+- Archivo de configuración de la API: `/opt/tecnocom180/app/.env`.
+
+La API no se despliega mediante Docker Compose de producción.
+Docker Compose administra PostgreSQL y Mosquitto.
+
+No asumir que actualizar el repositorio publica automáticamente el frontend.
+Verificar por separado el mecanismo de publicación web.
+
+### 16.2 Verificación previa de Git
+
+En Windows:
+
+```powershell
+git fetch origin
+git status -sb
+git log -5 --oneline
+git push origin feature/postgresql-production
+```
+
+En el VPS, antes de actualizar:
+
+```bash
+cd /opt/tecnocom180/app
+git fetch origin
+git status --short
+git log --oneline HEAD..origin/feature/postgresql-production
+git diff --stat HEAD..origin/feature/postgresql-production
+```
+
+No actualizar si existen cambios locales sin revisar.
+
+### 16.3 Punto de retorno y respaldo
+
+Antes del despliegue, registrar el commit actual y crear un tag de retorno.
+
+Referencia del 23 de octubre de 2026:
+
+- Versión anterior: `3c0d9f2`.
+- Tag: `predeploy-20261023`.
+- Versión candidata: `696bfac`.
+
+Respaldar exclusivamente la base de producción `tecnocom180`:
+
+```bash
+mkdir -p /opt/tecnocom180/backups/postgres
+FECHA=$(date +%Y%m%d-%H%M%S)
+
+docker exec tecnocom180-postgres \
+  pg_dump -U tecnocom180_app -d tecnocom180 -Fc \
+  > "/opt/tecnocom180/backups/postgres/tecnocom180-predeploy-${FECHA}.dump"
+```
+
+Comprobar que `pg_dump` terminó correctamente y verificar el respaldo.
+
+El VPS no tiene necesariamente `pg_restore` instalado. Podemos utilizar PostgreSQL 18 en Docker:
+
+```bash
+BACKUP=$(ls -t /opt/tecnocom180/backups/postgres/tecnocom180-predeploy-*.dump | head -1)
+
+ls -lh "$BACKUP"
+
+docker run --rm \
+  -v "$BACKUP:/backup.dump:ro" \
+  postgres:18 \
+  pg_restore --list /backup.dump
+```
+
+La lectura del catálogo es una verificación inicial, no una restauración completa.
+
+Respaldo comprobado inicialmente durante esta auditoría:
+
+`/opt/tecnocom180/backups/postgres/tecnocom180-predeploy-20261023-235112.dump`
+
+### 16.4 Migraciones PostgreSQL y Prisma
+
+Antes de ejecutar migraciones:
+
+1. Examinar los archivos SQL.
+2. Confirmar el historial registrado en `_prisma_migrations`.
+3. Verificar la base de datos destino.
+4. Tener respaldo y procedimiento de recuperación.
+5. Confirmar que `prisma.config.ts` utiliza el entorno correcto.
+
+Consultar el historial de producción:
+
+```bash
+docker exec tecnocom180-postgres \
+  psql -U tecnocom180_app -d tecnocom180 \
+  -c 'SELECT migration_name, finished_at, rolled_back_at FROM "_prisma_migrations" ORDER BY started_at DESC;'
+```
+
+Al momento de esta auditoría, producción solamente tenía aplicada:
+
+`20261002000100_postgresql_baseline`
+
+Se identificaron cinco migraciones pendientes para:
+
+- `DeviceAlertConfig`
+- `DeviceDiagnosticEvent`
+- `DeviceAlert`
+- `AlertNotification`
+- Restricciones de unicidad y bloqueo del trabajador de notificaciones.
+
+Las cinco migraciones revisadas eran aditivas, sin eliminación de tablas ni columnas existentes.
+
+**No ejecutar `prisma migrate deploy` hasta confirmar la conexión efectiva a `tecnocom180`.**
+
+### 16.5 MQTT y Telegram
+
+En la versión candidata:
+
+- MQTT funciona salvo que `MQTT_ENABLED` sea exactamente `"false"`.
+- MQTT requiere `MQTT_BROKER_URL`, `MQTT_USERNAME` y `MQTT_PASSWORD`.
+- Telegram automático solamente arranca cuando `TELEGRAM_NOTIFICATIONS_ENABLED` es exactamente `"true"`.
+
+En el VPS, ambas banderas estaban ausentes durante la auditoría. Por ello, MQTT debía arrancar y Telegram automático permanecer deshabilitado.
+
+La existencia de `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID` no habilita por sí sola el trabajador automático.
+
+Antes de activar Telegram para clientes, verificar los destinatarios por organización, sitio y dispositivo, así como las notificaciones pendientes.
+
+No mostrar valores sensibles del archivo `.env`.
+
+### 16.6 Verificación posterior al despliegue
+
+Comprobar:
+
+- Estado de `tecnocom180-api.service`.
+- PostgreSQL y Mosquitto operativos.
+- Recepción real de telemetría MQTT.
+- Endpoints de configuración de alertas.
+- Permisos y aislamiento por organización.
+- Compilación y publicación del frontend.
+- Estado del trabajador Telegram y destinatarios.
+
+### 16.7 Recuperación
+
+Un rollback de Git **no revierte migraciones de PostgreSQL**.
+
+Restaurar una base de datos puede sobrescribir información recibida después del respaldo; requiere un procedimiento específico y una decisión explícita.
+
+No reiniciar PostgreSQL ni Mosquitto como parte de una actualización ordinaria de la API, salvo que exista una necesidad comprobada.
+
+### 16.8 Estado al 23 de octubre de 2026
+
+- Auditoría preliminar completada.
+- Respaldo generado y catálogo verificado.
+- Tag de retorno creado.
+- Código candidato publicado en GitHub.
+- Despliegue de la nueva versión pendiente.
+- Pendiente verificar `prisma.config.ts`, dependencias y ejecución controlada de migraciones.
