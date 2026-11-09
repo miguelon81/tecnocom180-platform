@@ -9,6 +9,7 @@ import {
 
 import { toNullableNumber } from "./telemetryValidation";
 import { saveDeviceDiagnostic } from "./deviceDiagnostics";
+import { Prisma } from "../../../../generated/prisma/client";
 
 const brokerUrl = process.env.MQTT_BROKER_URL;
 const username = process.env.MQTT_USERNAME;
@@ -163,23 +164,61 @@ const firmware =
     ? telemetry.firmware.slice(0, 50)
     : null;
 
-const savedTelemetry = await prisma.deviceTelemetry.create({
-  data: {
-    deviceId: device.id,
-    nivel: toNullableNumber(telemetry.nivel),
-    bateria: toNullableNumber(telemetry.bateria),
-    senal: toNullableNumber(telemetry.senal),
-    recarga: toNullableNumber(telemetry.recarga),
-    consumo: toNullableNumber(telemetry.consumo),
-    relay1:
-      relay1 !== null && Number.isInteger(relay1)
-        ? relay1
-        : null,
-    falla,
-    codigoFalla,
-    firmware,
-  },
-});
+const measurementId =
+  typeof telemetry.measurementId === "string" &&
+  telemetry.measurementId.trim().length > 0
+    ? telemetry.measurementId.trim().slice(0, 100)
+    : null;
+
+let savedTelemetry;
+
+try {
+  savedTelemetry = await prisma.deviceTelemetry.create({
+    data: {
+      deviceId: device.id,
+      measurementId,
+      nivel: toNullableNumber(telemetry.nivel),
+      bateria: toNullableNumber(telemetry.bateria),
+      senal: toNullableNumber(telemetry.senal),
+      recarga: toNullableNumber(telemetry.recarga),
+      consumo: toNullableNumber(telemetry.consumo),
+      relay1:
+        relay1 !== null && Number.isInteger(relay1)
+          ? relay1
+          : null,
+      falla,
+      codigoFalla,
+      firmware,
+    },
+  });
+} catch (error) {
+  if (
+    measurementId !== null &&
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2002"
+  ) {
+    const existing = await prisma.deviceTelemetry.findUnique({
+      where: {
+        deviceId_measurementId: {
+          deviceId: device.id,
+          measurementId,
+        },
+      },
+      select: { id: true },
+    });
+
+    if (existing) {
+      console.log(
+        `MQTT duplicado ignorado: ${deviceCode}, ` +
+        `measurementId=${measurementId}`,
+      );
+
+      return;
+    }
+  }
+
+  throw error;
+}
   console.log(
     `Telemetría guardada: ${deviceCode}`,
   );

@@ -682,10 +682,15 @@ model DeviceTelemetry {
   // Consumo calculado en puntos porcentuales por hora.
   consumptionRate Float?
 
+  // Identificador generado por el dispositivo.
+  // Opcional para conservar compatibilidad con firmware V1.
+  measurementId String?
+
   createdAt DateTime @default(now())
 
   @@index([deviceId])
   @@index([createdAt])
+  @@unique([deviceId, measurementId])  
 }
 
 model DeviceTelemetryState {
