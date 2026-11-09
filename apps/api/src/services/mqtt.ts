@@ -1,5 +1,6 @@
 import mqtt, { type ISubscriptionMap } from "mqtt";
 import { processLevelAlert } from "./levelAlerts";
+import { validateDeviceTelemetry } from "./telemetryValidator";
 import { prisma } from "../lib/prisma";
 import {
   saveDiagnosticResult,
@@ -197,11 +198,48 @@ const savedTelemetry = await prisma.deviceTelemetry.create({
   }
 }
 
+// Validar la lectura guardada antes de generar alertas.
+let validated;
+
+try {
+  validated = await validateDeviceTelemetry(
+    device.id,
+    savedTelemetry.id,
+    {
+      nivel: telemetry.nivel,
+      falla: telemetry.falla,
+    },
+  );
+
+  console.log(
+    `Validación ${deviceCode}: ` +
+    `${validated.status} ` +
+    `(${validated.reason ?? "OK"})`,
+  );
+} catch (error) {
+  console.error(
+    `Error validando telemetría de ${deviceCode}:`,
+    error,
+  );
+
+  // La telemetría original ya fue guardada.
+  // No generar alertas a partir de datos sin validar.
+  return;
+}
+
+// Solo los niveles validados pueden generar o resolver alertas.
+if (validated.status !== "VALID" || validated.nivel === null) {
+  return;
+}
+
 try {
   await processLevelAlert(
     device.id,
     deviceCode,
-    telemetry,
+    {
+      nivel: validated.nivel,
+      falla: false,
+    },
   );
 } catch (error) {
   console.error(
