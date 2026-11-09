@@ -475,6 +475,9 @@ model Device {
 
   telemetry DeviceTelemetry[]
 
+  telemetryState DeviceTelemetryState?
+  commands       DeviceCommand[]
+
   alertConfig       DeviceAlertConfig?
   diagnosticEvents  DeviceDiagnosticEvent[]
   alerts            DeviceAlert[]
@@ -638,7 +641,6 @@ model AuditLog {
 // =====================
 // DEVICE TELEMETRY
 // =====================
-
 model DeviceTelemetry {
   id String @id @default(uuid())
 
@@ -658,11 +660,81 @@ model DeviceTelemetry {
 
   relay1 Int?
 
+  // Diagnosticos del firmware V2.
+  // Opcionales para conservar compatibilidad con V1.
+  falla Boolean?
+
+  codigoFalla String?
+
+  firmware String?
+
+  // Resultado del validador del backend.
+  // null = registro anterior a la implementación.
+  validationStatus String?
+
+  // Motivo de rechazo o confirmación pendiente.
+  validationReason String?
+
+  // Nivel aceptado por el backend.
+  // Puede diferir del nivel original recibido.
+  validatedLevel Float?
+
+  // Consumo calculado en puntos porcentuales por hora.
+  consumptionRate Float?
+
   createdAt DateTime @default(now())
 
   @@index([deviceId])
   @@index([createdAt])
 }
+
+model DeviceTelemetryState {
+  id String @id @default(uuid())
+
+  deviceId String @unique
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  // Última medición confiable
+  lastValidLevel Float?
+  lastValidAt    DateTime?
+
+  // Cambio sospechoso pendiente de confirmación
+  pendingLevel Float?
+  pendingAt    DateTime?
+
+  // Consumo inusual pendiente de corroboración
+  pendingConsumptionRate Float?
+  consumptionStartedAt    DateTime?
+  confirmationDueAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model DeviceCommand {
+  id String @id @default(uuid())
+
+  deviceId String
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  // Instrucción para el dispositivo
+  command String
+  payload Json?
+
+  // PENDING, SENT, ACKNOWLEDGED, EXPIRED, CANCELLED
+  status String @default("PENDING")
+
+  createdAt DateTime @default(now())
+  sentAt DateTime?
+  acknowledgedAt DateTime?
+  expiresAt DateTime?
+
+  attempts Int @default(0)
+
+  @@index([deviceId, status])
+  @@index([expiresAt])
+}
+
 // ============================================================
 // DEVICE ALERT CONFIGURATION
 // ============================================================
@@ -676,6 +748,16 @@ model DeviceAlertConfig {
   lowLevelThreshold      Float?
   recoveryLevelThreshold Float?
   lowBatteryThreshold    Float?
+
+  // Detección de consumo inusualmente alto
+  highConsumptionEnabled Boolean @default(false)
+
+  // Umbral en puntos porcentuales por hora
+  highConsumptionRate Float?
+
+  // Límites para solicitar mediciones de confirmación
+  confirmationMinMinutes Int @default(5)
+  confirmationMaxMinutes Int @default(30)
 
   enabled Boolean @default(true)
 

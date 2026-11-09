@@ -1,4 +1,4 @@
-import mqtt from "mqtt";
+import mqtt, { type ISubscriptionMap } from "mqtt";
 import { processLevelAlert } from "./levelAlerts";
 import { prisma } from "../lib/prisma";
 import {
@@ -66,21 +66,37 @@ type DiagnosticResultMessage = {
 // MQTT CONNECT
 // ============================================================
 
-mqttClient.on("connect", () => {
-  console.log("MQTT conectado a HiveMQ Cloud");
+const mqttLabMode = process.env.MQTT_LAB_MODE === "true";
+if (
+  mqttEnabled &&
+  process.env.NODE_ENV !== "production" &&
+  !mqttLabMode
+) {
+  throw new Error(
+    "SEGURIDAD: MQTT de desarrollo requiere MQTT_LAB_MODE=true",
+  );
+}
+const labTelemetryTopic = "TC180-000006/lab/sensores/";
 
-    mqttClient.subscribe(
-  {
-    "+/sensores/": {
-      qos: 0,
-    },
-    "+/status": {
-      qos: 1,
-    },
-    "+/diagnostics/result": {
-      qos: 1,
-    },
-  },
+mqttClient.on("connect", () => {
+  console.log(
+    mqttLabMode
+      ? "MQTT conectado en modo LAB"
+      : "MQTT conectado en modo normal",
+  );
+
+  const subscriptions: ISubscriptionMap = mqttLabMode
+    ? {
+        [labTelemetryTopic]: { qos: 0 as const },
+      }
+    : {
+        "+/sensores/": { qos: 0 as const },
+        "+/status": { qos: 1 as const },
+        "+/diagnostics/result": { qos: 1 as const },
+      };
+
+  mqttClient.subscribe(
+    subscriptions,
     (error: Error | null) => {
       if (error) {
         console.error(
@@ -90,15 +106,13 @@ mqttClient.on("connect", () => {
         return;
       }
 
-      console.log("MQTT suscrito a +/sensores/");
-      console.log("MQTT suscrito a +/status");
       console.log(
-        "MQTT suscrito a +/diagnostics/result",
+        "MQTT suscrito a:",
+        Object.keys(subscriptions).join(", "),
       );
     },
   );
 });
-
 // ============================================================
 // SENSOR TELEMETRY
 // ============================================================
@@ -132,7 +146,23 @@ async function processSensorTelemetry(
     },
   });
 const relay1 = toNullableNumber(telemetry.relay1);
-await prisma.deviceTelemetry.create({
+
+const falla =
+  typeof telemetry.falla === "boolean"
+    ? telemetry.falla
+    : null;
+
+const codigoFalla =
+  typeof telemetry.codigoFalla === "string"
+    ? telemetry.codigoFalla.slice(0, 100)
+    : null;
+
+const firmware =
+  typeof telemetry.firmware === "string"
+    ? telemetry.firmware.slice(0, 50)
+    : null;
+
+const savedTelemetry = await prisma.deviceTelemetry.create({
   data: {
     deviceId: device.id,
     nivel: toNullableNumber(telemetry.nivel),
@@ -144,6 +174,9 @@ await prisma.deviceTelemetry.create({
       relay1 !== null && Number.isInteger(relay1)
         ? relay1
         : null,
+    falla,
+    codigoFalla,
+    firmware,
   },
 });
   console.log(
@@ -399,6 +432,13 @@ mqttClient.on(
     const payload = message.toString();
     const parts = topic.split("/");
     const deviceCode = parts[0];
+    // Aislamiento de telemetría en modo laboratorio
+    if (mqttLabMode && topic !== labTelemetryTopic) {
+      console.warn(
+        `[MQTT LAB] Mensaje ignorado: ${topic}`,
+      );
+      return;
+     }
 
     console.log("MQTT mensaje recibido");
     console.log("Topic:", topic);
