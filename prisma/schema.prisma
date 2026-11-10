@@ -686,11 +686,33 @@ model DeviceTelemetry {
   // Opcional para conservar compatibilidad con firmware V1.
   measurementId String?
 
+  // ==================================================
+  // PROCESAMIENTO CONFIABLE DE ALERTAS
+  // ==================================================
+
+  // null = registro historico anterior al sistema.
+  // PENDING, PROCESSING, PROCESSED, FAILED, SKIPPED.
+  alertProcessingStatus String?
+
+  // Numero de intentos de procesamiento.
+  alertProcessingAttempts Int @default(0)
+
+  // Fecha de procesamiento satisfactorio.
+  alertProcessedAt DateTime?
+
+  // Ultimo error registrado.
+  alertProcessingError String?
+
+  // Reserva exclusiva para procesamiento concurrente.
+  alertProcessingLockToken String?
+  alertProcessingLockedUntil DateTime?
+
   createdAt DateTime @default(now())
 
   @@index([deviceId])
   @@index([createdAt])
   @@unique([deviceId, measurementId])  
+  @@index([alertProcessingStatus, alertProcessingLockedUntil])
 }
 
 model DeviceTelemetryState {
