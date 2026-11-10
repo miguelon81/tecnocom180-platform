@@ -2,7 +2,6 @@
 import { prisma } from "../lib/prisma";
 import {
   applyLevelAlertInTransaction,
-  type LevelAlertResult,
 } from "./levelAlerts";
 import { getDeviceLevelThresholds } from "./deviceAlertConfig";
 import { getTelegramPilotRecipient } from "./telegramPilot";
@@ -12,9 +11,12 @@ export type TelemetryAlertResult =
   | "SKIPPED"
   | "PENDING";
 
+type TerminalStatus = "PROCESSED" | "SKIPPED";
+
 export async function processTelemetryAlert(
   telemetryId: string,
   deviceCode: string,
+  lockToken?: string,
 ): Promise<TelemetryAlertResult> {
   const initial = await prisma.deviceTelemetry.findUnique({
     where: { id: telemetryId },
@@ -22,26 +24,26 @@ export async function processTelemetryAlert(
   });
 
   if (!initial) {
-    throw new Error(`Telemetria no encontrada: ${telemetryId}`);
+    throw new Error(
+      `Telemetria no encontrada: ${telemetryId}`,
+    );
   }
 
   const deviceId = initial.deviceId;
 
-  const config = await getDeviceLevelThresholds(deviceId);
-  const recipient = await getTelegramPilotRecipient(deviceId);
-
   try {
+    const config = await getDeviceLevelThresholds(deviceId);
+    const recipient = await getTelegramPilotRecipient(deviceId);
+
     return await prisma.$transaction(
       async (tx) => {
-        // Compartir el mismo bloqueo por dispositivo
-        // utilizado por el validador y las alertas.
+        // Un solo procesamiento por dispositivo.
         await tx.$executeRaw`
           SELECT pg_advisory_xact_lock(
             hashtextextended(${deviceId}, 0)
           )
         `;
 
-        // Releer después de obtener el bloqueo.
         const telemetry = await tx.deviceTelemetry.findUnique({
           where: { id: telemetryId },
           select: {
@@ -50,14 +52,18 @@ export async function processTelemetryAlert(
             validationStatus: true,
             validatedLevel: true,
             alertProcessingStatus: true,
+            alertProcessingLockToken: true,
+            alertProcessingLockedUntil: true,
           },
         });
 
         if (!telemetry || telemetry.deviceId !== deviceId) {
-          throw new Error("Telemetria inexistente o incorrecta");
+          throw new Error(
+            "Telemetria inexistente o dispositivo incorrecto",
+          );
         }
 
-        // Procesamiento idempotente.
+        // Una medicion terminada nunca se repite.
         if (
           telemetry.alertProcessingStatus === "PROCESSED" ||
           telemetry.alertProcessingStatus === "SKIPPED"
@@ -65,7 +71,26 @@ export async function processTelemetryAlert(
           return telemetry.alertProcessingStatus;
         }
 
-        // Una validación todavía sin resolver no se consume.
+        // Verificar propiedad de la reserva.
+        if (lockToken !== undefined) {
+          if (
+            telemetry.alertProcessingStatus !== "PROCESSING" ||
+            telemetry.alertProcessingLockToken !== lockToken ||
+            telemetry.alertProcessingLockedUntil === null ||
+            telemetry.alertProcessingLockedUntil <= new Date()
+          ) {
+            // No modificar trabajos de otro proceso.
+            return "PENDING";
+          }
+        } else if (
+          telemetry.alertProcessingStatus === "PROCESSING"
+        ) {
+          // Una llamada directa no puede tomar
+          // una medicion reservada por un worker.
+          return "PENDING";
+        }
+
+        // Las validaciones pendientes deben esperar.
         if (
           telemetry.validationStatus === null ||
           telemetry.validationStatus === "PENDING"
@@ -74,24 +99,61 @@ export async function processTelemetryAlert(
         }
 
         async function complete(
-          status: "PROCESSED" | "SKIPPED",
+          status: TerminalStatus,
         ): Promise<TelemetryAlertResult> {
-          await tx.deviceTelemetry.update({
-            where: { id: telemetryId },
+          const result = await tx.deviceTelemetry.updateMany({
+            where: {
+              id: telemetryId,
+              ...(lockToken !== undefined
+                ? {
+                    alertProcessingStatus: "PROCESSING",
+                    alertProcessingLockToken: lockToken,
+                    alertProcessingLockedUntil: {
+                      gt: new Date(),
+                    },
+                  }
+                : {
+                    OR: [
+                      { alertProcessingStatus: null },
+                      {
+                        alertProcessingStatus: {
+                          in: ["PENDING", "FAILED"],
+                        },
+                      },
+                    ],
+                  }),
+            },
             data: {
               alertProcessingStatus: status,
               alertProcessedAt: new Date(),
               alertProcessingError: null,
               alertProcessingLockToken: null,
               alertProcessingLockedUntil: null,
-              alertProcessingAttempts: { increment: 1 },
+
+              // El futuro worker incrementara
+              // attempts al reservar el trabajo.
+              ...(lockToken === undefined
+                ? {
+                    alertProcessingAttempts: {
+                      increment: 1,
+                    },
+                  }
+                : {}),
             },
           });
+
+          if (result.count !== 1) {
+            // Revertir tambien cualquier alerta creada
+            // dentro de esta misma transaccion.
+            throw new Error(
+              "No se pudo confirmar la reserva del procesamiento",
+            );
+          }
 
           return status;
         }
 
-        // Las lecturas rechazadas no generan alertas.
+        // Lecturas no validas no generan alertas.
         if (
           telemetry.validationStatus !== "VALID" ||
           telemetry.validatedLevel === null ||
@@ -114,22 +176,23 @@ export async function processTelemetryAlert(
           );
         }
 
-        // Solo aplicar la referencia VALID más reciente
-        // que conoce el validador del backend.
-        if (
-          telemetry.createdAt.getTime() !==
-          state.lastValidAt.getTime()
-        ) {
-          if (telemetry.createdAt < state.lastValidAt) {
-            return complete("SKIPPED");
-          }
+        // Politica provisional:
+        // procesar solo la ultima referencia
+        // validada por el backend.
+        const recordTime = telemetry.createdAt.getTime();
+        const lastValidTime = state.lastValidAt.getTime();
 
+        if (recordTime < lastValidTime) {
+          return complete("SKIPPED");
+        }
+
+        if (recordTime > lastValidTime) {
           throw new Error(
-            "La telemetria es posterior a la referencia validada",
+            "Telemetria posterior a la referencia validada",
           );
         }
 
-        // No utilizar UUID como desempate cronológico.
+        // No ordenar UUID como si fueran secuenciales.
         const sameTimestamp = await tx.deviceTelemetry.count({
           where: {
             deviceId,
@@ -142,22 +205,22 @@ export async function processTelemetryAlert(
           return complete("SKIPPED");
         }
 
-        // Misma transacción: alerta + estado de procesamiento.
-        const result: LevelAlertResult =
-          await applyLevelAlertInTransaction(
-            tx,
-            deviceId,
-            deviceCode,
-            telemetry.validatedLevel,
-            config,
-            recipient,
-          );
+        // Alerta y estado de procesamiento
+        // forman parte del mismo COMMIT.
+        const alertResult = await applyLevelAlertInTransaction(
+          tx,
+          deviceId,
+          deviceCode,
+          telemetry.validatedLevel,
+          config,
+          recipient,
+        );
 
-        if (result === "SKIPPED") {
-          return complete("SKIPPED");
-        }
-
-        return complete("PROCESSED");
+        return complete(
+          alertResult === "SKIPPED"
+            ? "SKIPPED"
+            : "PROCESSED",
+        );
       },
       {
         maxWait: 5000,
@@ -165,28 +228,64 @@ export async function processTelemetryAlert(
       },
     );
   } catch (error) {
+    // Si un worker reservó el trabajo, solamente ese
+    // worker debe registrar el fallo y programar
+    // el siguiente intento.
+    //
+    // Conservamos el lockToken para comprobar
+    // que la reserva todavía le pertenece.
+    if (lockToken !== undefined) {
+      throw error;
+    }
     const message =
-      error instanceof Error ? error.message : String(error);
+      error instanceof Error
+        ? error.message
+        : String(error);
 
-    // Registrar el fallo sin sobrescribir un resultado
-    // terminal confirmado por otra ejecución.
+    // No sobrescribir un resultado ya confirmado
+    // ni modificar la reserva de otro proceso.
     try {
       await prisma.deviceTelemetry.updateMany({
         where: {
           id: telemetryId,
-          alertProcessingStatus: {
-            notIn: ["PROCESSED", "SKIPPED", "PROCESSING"],
-          },
+          ...(lockToken !== undefined
+            ? {
+                alertProcessingStatus: "PROCESSING",
+                alertProcessingLockToken: lockToken,
+                alertProcessingLockedUntil: {
+                  gt: new Date(),
+                },
+              }
+            : {
+                OR: [
+                  { alertProcessingStatus: null },
+                  {
+                    alertProcessingStatus: {
+                      in: ["PENDING", "FAILED"],
+                    },
+                  },
+                ],
+              }),
         },
         data: {
           alertProcessingStatus: "FAILED",
           alertProcessingError: message.slice(0, 1000),
-          alertProcessingAttempts: { increment: 1 },
+          alertProcessingLockToken: null,
+          alertProcessingLockedUntil: null,
+          alertProcessedAt: null,
+
+          ...(lockToken === undefined
+            ? {
+                alertProcessingAttempts: {
+                  increment: 1,
+                },
+              }
+            : {}),
         },
       });
     } catch (saveError) {
       console.error(
-        "[TelemetryAlertProcessor] No se pudo registrar el fallo:",
+        "[TelemetryAlertProcessor] Error registrando fallo:",
         saveError,
       );
     }
