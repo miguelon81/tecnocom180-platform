@@ -1,5 +1,5 @@
 import mqtt, { type ISubscriptionMap } from "mqtt";
-import { processLevelAlert } from "./levelAlerts";
+
 import { validateDeviceTelemetry } from "./telemetryValidator";
 import { prisma } from "../lib/prisma";
 import {
@@ -189,6 +189,11 @@ try {
       falla,
       codigoFalla,
       firmware,
+
+      // El trabajo de alertas nace junto con la medición.
+      // Si falla la validación o se reinicia la API,
+      // el registro permanece disponible para recuperación.
+      alertProcessingStatus: "PENDING",
     },
   });
 } catch (error) {
@@ -271,21 +276,24 @@ if (validated.status !== "VALID" || validated.nivel === null) {
   return;
 }
 
-try {
-  await processLevelAlert(
-    device.id,
-    deviceCode,
-    {
-      nivel: validated.nivel,
-      falla: false,
-    },
-  );
-} catch (error) {
-  console.error(
-    `Error procesando alerta de ${deviceCode}:`,
-    error,
-  );
-}
+// El trabajo de alerta ya está registrado en PostgreSQL.
+//
+// No procesamos alertas directamente desde MQTT.
+// El AlertProcessingWorker se encargará de:
+// - Procesar mediciones VALID.
+// - Omitir mediciones REJECTED o SENSOR_ERROR.
+// - Esperar la confirmación de mediciones PENDING.
+// - Recuperar errores o interrupciones.
+// - Evitar procesamiento duplicado.
+
+console.log(
+  `[MQTT] Trabajo de alerta registrado: ${savedTelemetry.id}`,
+);
+
+console.log(
+  `[MQTT] Validación: ${validated.status}`,
+);
+
 }
 
 // ============================================================
