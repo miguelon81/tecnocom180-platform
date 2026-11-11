@@ -29,108 +29,96 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
 
   console.log(`[API] Señal recibida: ${signal}`);
+  const SHUTDOWN_TIMEOUT_MS = 30_000;
 
-  // Dejar de aceptar nuevas conexiones HTTP.
-  const httpClosed = new Promise<void>((resolve) => {
-    server.close((error) => {
-      if (error) {
-        console.error("[API] Error al cerrar servidor:", error);
-        process.exitCode = 1;
-      }
+  // Último recurso: evita que la API quede
+  // indefinidamente en estado de apagado.
+  const emergencyTimeout = setTimeout(() => {
+    console.error(
+      "[API] ERROR: apagado excedió 30 segundos",
+    );
 
-      console.log("[API] Servidor HTTP cerrado");
-      resolve();
-    });
-  });
+    console.error(
+      "[API] Finalización forzada. " +
+      "Los trabajos incompletos deberán recuperarse.",
+    );
 
-  // Detener nuevos ciclos y esperar el procesamiento activo.
-const WORKER_SHUTDOWN_TIMEOUT_MS = 30_000;
+    // No desconectar Prisma mientras pueda haber
+    // operaciones activas. El sistema operativo
+    // cerrará las conexiones del proceso.
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS);
 
-let shutdownTimeout: ReturnType<typeof setTimeout> | undefined;
-let workerStopped = false;
-
-
-try {
-  const result = await Promise.race([
-    Promise.allSettled([
-      stopMqtt(),
-      stopNotificationWorker(),
-      stopTelemetryWorker(),
-    ]).then((results) => {
-      const failed = results.filter(
-        (result) => result.status === "rejected",
-      );
-
-      if (failed.length > 0) {
-        for (const failure of failed) {
-          if (failure.status === "rejected") {
-            console.error(
-              "[API] Error durante apagado:",
-              failure.reason,
-            );
-          }
+  try {
+    // Detener la recepción de conexiones nuevas.
+    const httpClosed = new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
         }
 
-        return "failed" as const;
+        console.log("[API] Servidor HTTP cerrado");
+        resolve();
+      });
+    });
+
+    // Todos los servicios reciben la orden de
+    // detención y deben terminar su trabajo activo.
+    const results = await Promise.allSettled([
+      httpClosed,
+      Promise.resolve().then(() => stopMqtt()),
+      Promise.resolve().then(() => stopNotificationWorker()),
+      Promise.resolve().then(() => stopTelemetryWorker()),
+    ]);
+
+    const failures = results.filter(
+      (result) => result.status === "rejected",
+    );
+
+    if (failures.length > 0) {
+      for (const failure of failures) {
+        if (failure.status === "rejected") {
+          console.error(
+            "[API] Error durante apagado:",
+            failure.reason,
+          );
+        }
       }
 
-      return "stopped" as const;
-    }),
-    new Promise<"timeout">((resolve) => {
-      shutdownTimeout = setTimeout(
-        () => resolve("timeout"),
-        WORKER_SHUTDOWN_TIMEOUT_MS,
+      throw new Error(
+        "Uno o más servicios no pudieron detenerse correctamente",
       );
-    }),
-  ]);
+    }
 
-  workerStopped = result === "stopped";
-
-  if (result === "timeout") {
-    console.warn(
-      "[API] Worker excedió los 30 segundos de espera durante el apagado",
+    console.log(
+      "[API] Todos los servicios confirmaron su detención",
     );
-    process.exitCode = 1;
-  }
-} catch (error) {
-  console.error(
-    "[API] Error al detener NotificationWorker:",
-    error,
-  );
-  process.exitCode = 1;
-} finally {
-  if (shutdownTimeout !== undefined) {
-    clearTimeout(shutdownTimeout);
-  }
-}
 
-await httpClosed;
-
-if (workerStopped) {
-  try {
+    // PostgreSQL se desconecta únicamente
+    // después de terminar todos los servicios.
     await prisma.$disconnect();
+
     console.log("[API] PostgreSQL desconectado");
+    console.log("[API] Apagado ordenado completado");
+
   } catch (error) {
     console.error(
-      "[API] Error al desconectar PostgreSQL:",
+      "[API] Apagado incompleto:",
       error,
     );
+
+    // No dejar el proceso ejecutándose
+    // en un estado parcialmente detenido.
     process.exitCode = 1;
+
+    // Evitamos desconectar Prisma si alguno
+    // de los servicios falló durante su cierre.
+    process.exit(1);
+
+  } finally {
+    clearTimeout(emergencyTimeout);
   }
-} else {
-  console.warn(
-    "[API] Se omite desconexión de Prisma: worker aún activo",
-  );
-}
-
-if (workerStopped) {
-  console.log("[API] Apagado ordenado completado");
-} else {
-  console.warn(
-    "[API] Apagado incompleto: el worker no confirmó su detención",
-  );
-}
-
 }
 
 process.once("SIGINT", () => {
