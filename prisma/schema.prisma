@@ -723,7 +723,7 @@ model DeviceTelemetry {
 
   @@index([deviceId])
   @@index([createdAt])
-  @@unique([deviceId, measurementId])  
+  @@unique([deviceId, measurementId])
   @@index([alertProcessingStatus, alertProcessingLockedUntil])
 }
 
