@@ -22,6 +22,7 @@ export async function validateDeviceTelemetry(
   deviceId: string,
   telemetryId: string,
   telemetry: ValidationInput,
+  recoveryLockToken?: string,
 ): Promise<ValidationResult> {
   const nivel = toNullableNumber(telemetry.nivel);
 
@@ -44,12 +45,33 @@ export async function validateDeviceTelemetry(
           validationStatus: true,
           validatedLevel: true,
           validationReason: true,
+          validationRecoveryLockToken: true,
+          validationRecoveryLockedUntil: true,
         },
       });
 
       if (!record || record.deviceId !== deviceId) {
         throw new Error("Telemetría no encontrada o dispositivo incorrecto");
       }
+     // Comprobar si existe una reserva de recuperación vigente.
+     const activeRecoveryLock =
+       record.validationRecoveryLockToken !== null &&
+       record.validationRecoveryLockedUntil !== null &&
+       record.validationRecoveryLockedUntil > new Date();
+
+     if (recoveryLockToken !== undefined) {
+       // El recuperador debe conservar su llave vigente.
+       if (
+         record.validationRecoveryLockToken !== recoveryLockToken ||
+         !activeRecoveryLock
+       ) {
+         throw new Error("VALIDATION_RECOVERY_LOCK_LOST");
+       }
+     } else if (activeRecoveryLock) {
+       // MQTT no puede validar una medición que
+       // otro recuperador tiene reservada.
+       throw new Error("VALIDATION_RECOVERY_IN_PROGRESS");
+     }
 
       // Evita procesar dos veces el mismo registro.
       if (record.validationStatus !== null) {
@@ -61,6 +83,41 @@ export async function validateDeviceTelemetry(
         };
       }
 
+      // No validar una medición si existe otra anterior
+      // del mismo dispositivo que todavía no fue validada.
+      //
+      // Se ejecuta dentro del bloqueo transaccional
+      // por dispositivo.
+      //
+      // Excluye los registros históricos anteriores
+      // al sistema de trabajos persistentes.
+      const olderUnvalidated = await tx.deviceTelemetry.findFirst({
+        where: {
+          deviceId,
+          validationStatus: null,
+          alertProcessingStatus: "PENDING",
+          OR: [
+            {
+              createdAt: {
+                lt: record.createdAt,
+              },
+            },
+            {
+              createdAt: record.createdAt,
+              id: {
+                lt: telemetryId,
+              },
+            },
+          ],
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (olderUnvalidated) {
+        throw new Error("OLDER_TELEMETRY_NOT_VALIDATED");
+      }
       const state = await tx.deviceTelemetryState.upsert({
         where: { deviceId },
         create: { deviceId },
@@ -74,14 +131,21 @@ export async function validateDeviceTelemetry(
         reason: string | null,
         validatedLevel: number | null,
       ): Promise<ValidationResult> {
-        await tx.deviceTelemetry.update({
-          where: { id: telemetryId },
-          data: {
-            validationStatus: status,
-            validationReason: reason,
-            validatedLevel,
-          },
-        });
+       await tx.deviceTelemetry.update({
+        where: { id: telemetryId },
+        data: {
+          validationStatus: status,
+          validationReason: reason,
+          validatedLevel,
+
+          // La validación terminó correctamente.
+          // Ya no necesita una reserva de recuperación.
+          validationRecoveryLockToken: null,
+          validationRecoveryLockedUntil: null,
+          validationRecoveryNextAttemptAt: null,
+          validationRecoveryError: null,
+        },
+      });
 
         return {
           valid: status === "VALID",

@@ -679,6 +679,18 @@ model DeviceTelemetry {
   // Puede diferir del nivel original recibido.
   validatedLevel Float?
 
+  // Recuperacion de validaciones incompletas.
+  // Independiente del procesamiento de alertas.
+  validationRecoveryAttempts Int @default(0)
+
+  validationRecoveryLockToken String?
+
+  validationRecoveryLockedUntil DateTime?
+
+  validationRecoveryNextAttemptAt DateTime?
+
+  validationRecoveryError String?
+
   // Consumo calculado en puntos porcentuales por hora.
   consumptionRate Float?
 
