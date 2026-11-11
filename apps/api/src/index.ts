@@ -52,11 +52,30 @@ let workerStopped = false;
 
 try {
   const result = await Promise.race([
-  Promise.all([
-    stopMqtt(),
-    stopNotificationWorker(),
-    stopTelemetryWorker(),
-  ]).then(() => "stopped" as const),
+    Promise.allSettled([
+      stopMqtt(),
+      stopNotificationWorker(),
+      stopTelemetryWorker(),
+    ]).then((results) => {
+      const failed = results.filter(
+        (result) => result.status === "rejected",
+      );
+
+      if (failed.length > 0) {
+        for (const failure of failed) {
+          if (failure.status === "rejected") {
+            console.error(
+              "[API] Error durante apagado:",
+              failure.reason,
+            );
+          }
+        }
+
+        return "failed" as const;
+      }
+
+      return "stopped" as const;
+    }),
     new Promise<"timeout">((resolve) => {
       shutdownTimeout = setTimeout(
         () => resolve("timeout"),
