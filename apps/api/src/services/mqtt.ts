@@ -11,6 +11,20 @@ import { toNullableNumber } from "./telemetryValidation";
 import { saveDeviceDiagnostic } from "./deviceDiagnostics";
 import { Prisma } from "../../../../generated/prisma/client";
 
+// Operaciones MQTT que todavía utilizan PostgreSQL.
+const activeMqttTasks = new Set<Promise<void>>();
+
+let mqttStopping = false;
+
+function trackMqttTask(task: Promise<void>): void {
+  activeMqttTasks.add(task);
+
+  void task.then(
+    () => activeMqttTasks.delete(task),
+    () => activeMqttTasks.delete(task),
+  );
+}
+
 const brokerUrl = process.env.MQTT_BROKER_URL;
 const username = process.env.MQTT_USERNAME;
 const password = process.env.MQTT_PASSWORD;
@@ -514,6 +528,12 @@ async function processAgentStatus(
 mqttClient.on(
   "message",
   (topic: string, message: Buffer) => {
+      if (mqttStopping) {
+        console.log(
+          `[MQTT] Mensaje ignorado durante apagado: ${topic}`,
+        );
+        return;
+      }
     const payload = message.toString();
     const parts = topic.split("/");
     const deviceCode = parts[0];
@@ -537,46 +557,49 @@ mqttClient.on(
     }
 
     if (topic.endsWith("/sensores/")) {
-      void processSensorTelemetry(
-        deviceCode,
-        payload,
-      ).catch((error: unknown) => {
-        console.error(
-          "Error guardando telemetría MQTT:",
-          error,
-        );
-      });
-
+      trackMqttTask(
+        processSensorTelemetry(
+          deviceCode,
+          payload,
+        ).catch((error: unknown) => {
+          console.error(
+            "Error guardando telemetría MQTT:",
+            error,
+          );
+        }),
+      );
       return;
     }
 
     if (topic.endsWith("/status")) {
-  void processAgentStatus(
-    deviceCode,
-    payload,
-  ).catch((error: unknown) => {
-    console.error(
-      "Error procesando heartbeat del agente:",
-      error,
-    );
-  });
-
-  return;
-}
+      trackMqttTask(
+        processAgentStatus(
+          deviceCode,
+          payload,
+        ).catch((error: unknown) => {
+          console.error(
+            "Error procesando heartbeat del agente:",
+            error,
+          );
+        }),
+      );
+      return;
+    }
 
     if (
       topic.endsWith("/diagnostics/result")
     ) {
-      void processDiagnosticResult(
-        deviceCode,
-        payload,
-      ).catch((error: unknown) => {
-        console.error(
-          "Error procesando resultado de diagnóstico MQTT:",
-          error,
-        );
-      });
-
+        trackMqttTask(
+          processDiagnosticResult(
+            deviceCode,
+            payload,
+          ).catch((error: unknown) => {
+            console.error(
+              "Error procesando resultado de diagnóstico MQTT:",
+              error,
+            );
+          }),
+      );
       return;
     }
 
@@ -662,6 +685,56 @@ mqttClient.on("close", () => {
   );
 });
 
+let mqttStopPromise: Promise<void> | null = null;
+
+/**
+ * Detiene la recepción de nuevos mensajes MQTT
+ * y espera las operaciones ya iniciadas.
+ *
+ * No desconecta Prisma.
+ */
+export function stopMqtt(): Promise<void> {
+  if (mqttStopPromise !== null) {
+    return mqttStopPromise;
+  }
+
+  mqttStopping = true;
+
+  mqttStopPromise = (async () => {
+    console.log("[MQTT] Detención solicitada");
+
+    // Cerrar la conexión con el broker.
+    // force=true evita esperar mensajes MQTT QoS pendientes.
+    await new Promise<void>((resolve, reject) => {
+      mqttClient.end(true, {}, (error?: Error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+
+    console.log("[MQTT] Conexión cerrada");
+
+    // Los manejadores que ya comenzaron pueden seguir
+    // utilizando PostgreSQL. Esperamos su finalización.
+    while (activeMqttTasks.size > 0) {
+      console.log(
+        `[MQTT] Esperando ${activeMqttTasks.size} operaciones activas...`,
+      );
+
+      await Promise.allSettled(
+        Array.from(activeMqttTasks),
+      );
+    }
+
+    console.log("[MQTT] Operaciones finalizadas");
+  })();
+
+  return mqttStopPromise;
+}
 
 export {
   mqttClient,

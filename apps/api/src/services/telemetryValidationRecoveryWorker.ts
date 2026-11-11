@@ -217,12 +217,14 @@ export async function recoverPendingValidations(
     testMode?: boolean;
     telemetryId?: string;
     batchSize?: number;
+    shouldStop?: () => boolean;
   } = {},
 ): Promise<ValidationRecoveryResult> {
-  const {
+    const {
     testMode = false,
     telemetryId,
     batchSize = DEFAULT_BATCH_SIZE,
+    shouldStop = () => false,
   } = options;
 
   checkEnvironment(testMode, telemetryId);
@@ -243,12 +245,21 @@ export async function recoverPendingValidations(
     errors: 0,
   };
 
-  for (let i = 0; i < batchSize; i++) {
+    for (let i = 0; i < batchSize; i++) {
+    // Si se solicitó detener el servicio,
+    // no reclamar nuevas mediciones.
+    if (shouldStop()) {
+      console.log(
+        "[ValidationRecovery] Detención solicitada; " +
+        "no se reclamarán más trabajos",
+      );
+      break;
+    }
+
     const job = await claimNextValidation(
       testMode,
       telemetryId,
     );
-
     if (!job) {
       break;
     }

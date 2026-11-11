@@ -1,10 +1,14 @@
 import { app } from "./app";
-import "./services/mqtt";
+import { stopMqtt } from "./services/mqtt";
 import { prisma } from "./lib/prisma";
 import {
   startNotificationWorker,
   stopNotificationWorker,
 } from "./services/notificationWorkerRunner";
+import {
+  startTelemetryWorker,
+  stopTelemetryWorker,
+} from "./services/telemetryWorkerRunner";
 
 const PORT = 3000;
 const HOST = process.env.API_HOST || "127.0.0.1";
@@ -15,6 +19,7 @@ const server = app.listen(PORT, HOST, () => {
   );
 
   startNotificationWorker();
+  startTelemetryWorker();
 });
 
 let shuttingDown = false;
@@ -47,7 +52,11 @@ let workerStopped = false;
 
 try {
   const result = await Promise.race([
-    stopNotificationWorker().then(() => "stopped" as const),
+  Promise.all([
+    stopMqtt(),
+    stopNotificationWorker(),
+    stopTelemetryWorker(),
+  ]).then(() => "stopped" as const),
     new Promise<"timeout">((resolve) => {
       shutdownTimeout = setTimeout(
         () => resolve("timeout"),
