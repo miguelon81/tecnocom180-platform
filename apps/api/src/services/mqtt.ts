@@ -703,20 +703,27 @@ export function stopMqtt(): Promise<void> {
   mqttStopPromise = (async () => {
     console.log("[MQTT] Detención solicitada");
 
-    // Cerrar la conexión con el broker.
-    // force=true evita esperar mensajes MQTT QoS pendientes.
-    await new Promise<void>((resolve, reject) => {
-      mqttClient.end(true, {}, (error?: Error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
+        // Si MQTT fue deshabilitado, el cliente nunca
+    // inició su conexión (manualConnect=true).
+    // No debemos llamar a end() en ese estado.
+    if (mqttEnabled) {
+      await new Promise<void>((resolve, reject) => {
+        mqttClient.end(true, {}, (error?: Error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
 
-        resolve();
+          resolve();
+        });
       });
-    });
 
-    console.log("[MQTT] Conexión cerrada");
+      console.log("[MQTT] Conexión cerrada");
+    } else {
+      console.log(
+        "[MQTT] Deshabilitado; no requiere cerrar conexión",
+      );
+    }
 
     // Los manejadores que ya comenzaron pueden seguir
     // utilizando PostgreSQL. Esperamos su finalización.
