@@ -1387,3 +1387,224 @@ Los valores restaurados se verificaron directamente en PostgreSQL.
 6. Incorporar diagnósticos Edge de Wi-Fi, MQTT y sensores.
 
 **Conclusión:** el despliegue `db3ce46` quedó funcionando en producción, con API, frontend, PostgreSQL y telemetría validados. Las notificaciones Telegram automáticas siguen deshabilitadas hasta implementar el aislamiento de destinatarios.
+
+
+# Addenda — Despliegue de telemetría V2 y recuperación de workers
+
+**Proyecto:** TECNOCOM180 Platform
+**Fecha del despliegue:** 11 de noviembre de 2026 (registros del servidor en UTC)
+**Rama:** `feature/postgresql-production`
+**Versión anterior de producción:** `db3ce46`
+**Nueva versión desplegada:** `1b77c0e` (`style: elimina espacio final en esquema Prisma`)
+**Estado:** Despliegue de backend completado; primera medición MQTT real procesada y verificada en PostgreSQL. Pruebas extendidas de producción aún pendientes.
+
+> **Instrucción a mi yo del futuro:** Antes de proponer una nueva instalación o despliegue, revisar esta addenda y la guía original. TECNOCOM180 ya tiene VPS Ubuntu Hostinger, servicio `systemd`, PostgreSQL 18 en Docker, MQTT y releases independientes por Git Worktree. Confirmar el estado actual en el VPS antes de asumir que estas rutas, commits o configuraciones siguen activos. Trabajar un paso a la vez; no pedir ni imprimir secretos.
+
+## 1. Arquitectura y rutas confirmadas
+
+- Código Git del VPS: `/opt/tecnocom180/app`, rama local `feature/postgresql-production` (en esta intervención conservada en `3c0d9f2`).
+- Releases mediante Git Worktree: `/opt/tecnocom180/releases/<commit>`.
+- Release API previa: `/opt/tecnocom180/releases/db3ce46`.
+- Release API nueva: `/opt/tecnocom180/releases/1b77c0e`.
+- Servicio: `tecnocom180-api.service`, ejecutado por usuario `tecnocom180`, Node.js 24 y `tsx`; escucha en `127.0.0.1:3000` detrás de Nginx.
+- Configuración de la API: `/opt/tecnocom180/app/.env`; **no confundir** con `/opt/tecnocom180/.env` de Docker Compose.
+- Override de `systemd`: `/etc/systemd/system/tecnocom180-api.service.d/production.conf` con `Environment=NODE_ENV=production`.
+- PostgreSQL en contenedor `tecnocom180-postgres`, base **de producción** `tecnocom180`; base de pruebas separada `tecnocom180_test`.
+- Mosquitto en Docker; la conexión MQTT de producción de la API fue observada en modo normal, conforme a la arquitectura documentada con HiveMQ Cloud. No asumir migración definitiva a Mosquitto propio.
+- Frontend: en esta intervención **no se recompiló ni republicó**; el enlace publicado conocido permanecía apuntando a `/opt/tecnocom180/releases/db3ce46/apps/web/dist`. Confirmar el enlace antes de futuros cambios.
+
+## 2. Control de versiones y preparación de la release
+
+1. En Windows se auditaron 13 commits entre `b7b556e` y `1b77c0e` (telemetría V2, validación, idempotencia de mediciones, procesamiento transaccional de alertas, recuperadores, apagado controlado y corrección de formato Prisma). `git diff --check` quedó limpio.
+2. `git push origin feature/postgresql-production` publicado hasta `1b77c0e`. Los múltiples scripts temporales y respaldos sin seguimiento en Windows **no se incluyeron**; evitar `git add .`.
+3. VPS: `git fetch origin feature/postgresql-production`, sin cambiar la rama local ni la release activa.
+4. Creación independiente:
+
+   ```bash
+   cd /opt/tecnocom180/app
+   git worktree add --detach /opt/tecnocom180/releases/1b77c0e 1b77c0e
+   ```
+
+5. En la nueva release: `npm ci` instaló 453 paquetes. Reportó 10 vulnerabilidades moderadas en el árbol completo, pero `npm audit --omit=dev --audit-level=moderate` devolvió **0 vulnerabilidades** en dependencias de producción. Hubo advertencias de scripts de instalación de Prisma y esbuild; las herramientas funcionaron. **No se ejecutó `npm audit fix --force` ni se actualizaron versiones.**
+6. Entorno observado: Node `v24.21.0`, Prisma CLI y `@prisma/client` `7.10.1`, `tsx` `4.19.4`.
+7. Generación del cliente con URL ficticia, sin conexión a producción:
+
+   ```bash
+   cd /opt/tecnocom180/releases/1b77c0e
+   DATABASE_URL='postgresql://placeholder:placeholder@127.0.0.1:5432/tecnocom180_test?schema=public' \
+     ./node_modules/.bin/prisma generate
+   npm run build --workspace=@tecnocom180/api
+   git status --short
+   ```
+
+   Prisma Client generado correctamente; compilación `tsc` exitosa; árbol Git limpio.
+
+## 3. Migraciones PostgreSQL
+
+Prisma `migrate status` ejecutado desde la nueva release con la configuración real de la API, confirmó base `tecnocom180` en `127.0.0.1:5432`, **11 migraciones en disco**, de las que **5 estaban pendientes**. Se verificó que seis migraciones anteriores, desde el baseline hasta el bloqueo del trabajador de notificaciones, estaban aplicadas.
+
+Migraciones SQL auditadas y aplicadas en el orden indicado:
+
+1. `20261105033544_add_device_telemetry_v2_diagnostics`
+2. `20261109162249_telemetry_validation_consumption_commands`
+3. `20261109184222_add_telemetry_measurement_id`
+4. `20261110194108_alert_processing_tracking`
+5. `20261111022241_validation_recovery_tracking`
+
+Las migraciones agregaron campos a `DeviceTelemetry` y `DeviceAlertConfig`, tablas `DeviceTelemetryState` y `DeviceCommand`, índices y llaves foráneas; no se identificaron instrucciones `DROP` ni `DELETE`. El índice único compuesto `(deviceId, measurementId)` admite `NULL` para mediciones históricas en PostgreSQL. La modificación de `migration_lock.toml` afectó comentarios/formato; `provider = "postgresql"` se mantuvo.
+
+**Respaldo previo:**
+
+`/opt/tecnocom180/backups/postgres/tecnocom180-predeploy-20261111-045737.dump`
+
+- Creado con `docker exec tecnocom180-postgres pg_dump -U tecnocom180_app -d tecnocom180 -Fc > "$BACKUP"`, comprobando éxito de la orden y archivo no vacío.
+- Tamaño observado: **269 KB**.
+- Catálogo verificado con `postgres:18` y `pg_restore --list /backup.dump`, ejecutado por Docker con volumen de solo lectura.
+- **No se hizo restauración completa de prueba.** La verificación del catálogo no garantiza una recuperación íntegra ante cualquier eventualidad.
+
+Durante la ventana de mantenimiento, tras detener la API, se ejecutó:
+
+```bash
+cd /opt/tecnocom180/releases/1b77c0e
+node --env-file=/opt/tecnocom180/app/.env \
+  ./node_modules/prisma/build/index.js migrate deploy
+```
+
+**Resultado confirmado:** `All migrations have been successfully applied.` No se reiniciaron PostgreSQL, Mosquitto ni Nginx.
+
+## 4. Variables y condiciones de arranque
+
+Se detectó que `NODE_ENV` no estaba establecido ni en el `.env` ni previamente en la unidad `systemd`; el nuevo `mqtt.ts` impide MQTT normal si `NODE_ENV !== "production"` y no está en LAB. Se creó el override:
+
+`/etc/systemd/system/tecnocom180-api.service.d/production.conf`
+
+```ini
+[Service]
+Environment=NODE_ENV=production
+```
+
+Se ejecutó `sudo systemctl daemon-reload` y se confirmó `Environment=NODE_ENV=production`, `NeedDaemonReload=no`; la API anterior no fue reiniciada por este cambio.
+
+Se respaldó `/opt/tecnocom180/app/.env` en `/opt/tecnocom180/app/.env.predeploy-1b77c0e` (permisos `600`, propietario `tecnocom180`). Se incorporaron estas variables a la configuración de la API:
+
+```dotenv
+TELEMETRY_VALIDATION_RECOVERY_ENABLED=true
+ALERT_PROCESSING_WORKER_ENABLED=true
+TELEGRAM_NOTIFICATIONS_ENABLED=false
+```
+
+`MQTT_ENABLED` y `MQTT_LAB_MODE` permanecieron sin definir. Según la lógica auditada, el primero habilita MQTT al no ser exactamente `false`, y el segundo no activa LAB salvo que sea exactamente `true`. La conexión posterior al arranque confirmó modo normal.
+
+**Dependencia importante:** en esta versión, MQTT guarda cada nueva medición con `alertProcessingStatus = 'PENDING'` y valida inmediatamente, pero **no procesa la alerta directamente**; el `TelemetryRunner` debe estar habilitado para consumir trabajos. Requiere **las dos** banderas de recuperación en `true`. Telegram automático solo arranca con `TELEGRAM_NOTIFICATIONS_ENABLED=true`; permaneció apagado.
+
+**Protección de históricos:** el worker de validación requiere `validationStatus IS NULL` **y** `alertProcessingStatus='PENDING'`; el de alertas requiere `alertProcessingStatus IS NOT NULL` y una validación final `VALID`, `REJECTED` o `SENSOR_ERROR`. Las filas históricas con campos nuevos `NULL` quedan fuera de sus colas. Los trabajadores usan `FOR UPDATE SKIP LOCKED`, tokens de reserva, vencimientos y límite de cinco intentos.
+
+## 5. Detención de la release anterior y cambio de servicio
+
+Antes de detener la API, se respaldaron:
+
+- `/etc/systemd/system/tecnocom180-api.service.predeploy-1b77c0e`
+- `/etc/systemd/system/tecnocom180-api.service.d/production.conf.predeploy-1b77c0e`
+
+Al ejecutar `sudo systemctl stop tecnocom180-api.service`, la release `db3ce46` recibió `SIGTERM` y el NotificationWorker se detuvo, pero el proceso salió con **código 143**, registrado por systemd como `Result=exit-code`, `SubState=failed`. No se observó timeout de systemd ni cierre ordenado completo. Antes de migrar se comprobó `MainPID=0` y ausencia de proceso escuchando en el puerto 3000. **No confundir este código 143 de la versión anterior con un fallo probado de la nueva versión.**
+
+Tras aplicar las migraciones se cambió únicamente la ruta de release en la unidad `systemd`:
+
+```bash
+sudo sed -i \
+  's#/opt/tecnocom180/releases/db3ce46#/opt/tecnocom180/releases/1b77c0e#g' \
+  /etc/systemd/system/tecnocom180-api.service
+sudo systemctl daemon-reload
+```
+
+Se confirmó `WorkingDirectory` y `ExecStart` apuntando a `1b77c0e`, `Environment=NODE_ENV=production` y `NeedDaemonReload=no`. Se ejecutó:
+
+```bash
+sudo systemctl reset-failed tecnocom180-api.service
+sudo systemctl start tecnocom180-api.service
+systemctl is-active tecnocom180-api.service
+```
+
+**Resultado:** `active`. La unidad tenía `Restart=on-failure`, `RestartSec=5` y `TimeoutStopUSec=1min 30s` en la auditoría inicial. El nuevo código incluye un timeout interno de apagado de 30 segundos y coordinación de parada de HTTP, MQTT, NotificationWorker, TelemetryRunner y Prisma; sus pruebas de caída y apagado se efectuaron en laboratorio, no se repitieron en producción durante este despliegue.
+
+## 6. Evidencias del primer arranque de producción
+
+Registros iniciales el **11 de noviembre de 2026, 05:11:52 UTC**:
+
+```text
+TECNOCOM180 API running on http://127.0.0.1:3000
+[NotificationWorker] Deshabilitado por configuración
+[TelemetryRunner] Iniciado
+MQTT conectado en modo normal
+MQTT suscrito a: +/sensores/, +/status, +/diagnostics/result
+```
+
+También se recibió `TC180-AG-000001/status` y se actualizó el agente a ONLINE.
+
+La primera consulta de telemetría mostró que, desde el arranque, aún no habían llegado mediciones IoT nuevas; no se interpretó eso como fallo de la API. Posteriormente llegó la primera medición real:
+
+```text
+Topic: TC180-000001/sensores/
+Telemetría guardada: TC180-000001
+Validación TC180-000001: VALID (INITIAL_REFERENCE)
+[MQTT] Validación: VALID
+[AlertWorker] Reservado: 42f466b2-02d9-46a2-bfe2-3ca4c7e4df2e, intento 1/5
+[AlertWorker] 42f466b2-02d9-46a2-bfe2-3ca4c7e4df2e: PROCESSED
+[TelemetryRunner] Trabajos de alerta: 1
+```
+
+Se verificó directamente en PostgreSQL la fila `DeviceTelemetry.id = '42f466b2-02d9-46a2-bfe2-3ca4c7e4df2e'`:
+
+| Campo | Valor confirmado |
+|---|---|
+| `validationStatus` | `VALID` |
+| `validationReason` | `INITIAL_REFERENCE` |
+| `alertProcessingStatus` | `PROCESSED` |
+| `alertProcessingAttempts` | `1` |
+| `alertProcessingLockToken` | `NULL` |
+| `alertProcessingLockedUntil` | `NULL` |
+
+**Conclusión comprobada:** un mensaje MQTT real de `TC180-000001` se almacenó, validó y procesó por el AlertWorker; la reserva quedó liberada. `PROCESSED` acredita la finalización del trabajo, **no necesariamente la creación de una alerta activa**. `INITIAL_REFERENCE` es la referencia inicial del validador, no un error.
+
+## 7. Pruebas de laboratorio previas al despliegue
+
+En `tecnocom180_test` se probaron: persistencia MQTT, validación, procesamiento transaccional de alertas, protección contra duplicados por `measurementId`, reintentos y recuperación de reservas vencidas, cierre SIGINT, espera de ciclos activos y finalización de emergencia por timeout. El resultado registrado del último laboratorio fue **cero validaciones nuevas pendientes y cero trabajos de alertas abiertos**; 7,362 registros históricos con campos de estado `NULL` permanecieron excluidos. Telegram automático se mantuvo deshabilitado.
+
+En particular, una prueba de caída forzada del AlertWorker recuperó el trabajo en el intento 2/5, terminó `SKIPPED` para una medición `SENSOR_ERROR` sin crear alertas y liberó su reserva. Esa prueba verifica la recuperación del *lease*, no equivale a una interrupción real durante una transacción de generación de alerta.
+
+## 8. Procedimiento de verificación posterior y pendientes
+
+Para un control futuro, sin generar mediciones artificiales:
+
+```bash
+systemctl is-active tecnocom180-api.service
+systemctl show tecnocom180-api.service -p WorkingDirectory -p ExecStart -p Environment --no-pager
+sudo journalctl -u tecnocom180-api.service -n 80 --no-pager -o short-iso
+```
+
+Comprobar nuevas publicaciones `+/sensores/` y estado final de validación/alerta en `DeviceTelemetry`, comparando timestamps posteriores a la puesta en marcha. Seguir observando otros dispositivos, errores o reintentos, y verificar condiciones reales de creación/resolución de alertas. La conexión MQTT y una sola medición exitosa no validan todos los escenarios operativos.
+
+Pendientes que **no se deben marcar como terminados**:
+
+- Observar procesamiento de más dispositivos durante una ventana prolongada.
+- Verificar generación y resolución reales de alertas con umbrales, sin alterar arbitrariamente la configuración de clientes.
+- Probar recuperación completa de un respaldo PostgreSQL en un entorno separado.
+- Verificar comportamiento de caída y reinicio de la API nueva **en producción**, solo dentro de una ventana autorizada.
+- Revisar estrategia de observabilidad, estado de los workers y alertas ante fallos repetidos.
+- Resolver destinatarios Telegram por organización/sitio/dispositivo y auditar pendientes antes de habilitar notificaciones.
+- Planificar migración definitiva desde HiveMQ Cloud a Mosquitto propio, si sigue siendo un objetivo.
+- Evaluar las 10 vulnerabilidades moderadas del árbol completo npm; no se cambió el lockfile en este despliegue.
+- Confirmar el estado actual del frontend antes de un futuro despliegue web; no se desplegó frontend con esta intervención.
+
+## 9. Recuperación y precauciones
+
+- La release anterior `db3ce46` permanece en Git Worktree y la unidad anterior tiene respaldo.
+- **Volver a `db3ce46` no revierte PostgreSQL.** Las cinco migraciones nuevas permanecen aplicadas y la compatibilidad del código anterior con el esquema ampliado debe analizarse antes de cambiar rutas.
+- **No restaurar automáticamente** el dump antiguo: restaurarlo sobre producción puede sobrescribir la telemetría recibida después de crearlo.
+- El dump `tecnocom180-predeploy-20261111-045737.dump` es un punto de recuperación previo a migraciones; su catálogo fue verificado, pero no se probó una restauración íntegra.
+- No reiniciar PostgreSQL, Mosquitto ni Nginx para un cambio exclusivo de la API sin motivo técnico.
+- No tocar el `.env` de Docker Compose cuando se pretende modificar las variables de la API.
+- No exponer credenciales en salidas de comandos, documentos ni mensajes.
+- Antes de cualquier nuevo despliegue, confirmar Git local/remoto, release actual, migraciones pendientes, backup verificable, `systemd` y conexiones MQTT; no asumir que esta addenda describe el estado más reciente.
+
+**Cierre de esta addenda:** backend `1b77c0e` desplegado y primer ciclo MQTT real completado y confirmado por PostgreSQL. La operación sostenida y escenarios adicionales quedan por comprobar.
