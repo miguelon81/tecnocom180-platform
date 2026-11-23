@@ -2,6 +2,10 @@ import { prisma } from "../lib/prisma";
 import { sendTelegramMessage } from "./telegram";
 import { randomUUID } from "node:crypto";
 
+import {
+  isTelegramPilotNotificationAllowed,
+} from "./telegramPilot";
+
 type ClaimedNotification = {
   id: string;
   recipient: string;
@@ -217,8 +221,47 @@ export async function processNextNotification(
     return false;
   }
 
-  try {
-    await sendMessage(
+try {
+// Segunda barrera de autorización.
+// No se aplica al envío simulado de pruebas.
+if (!testMode) {
+  const authorized =
+    await isTelegramPilotNotificationAllowed(
+      notification.id,
+    );
+
+  if (!authorized) {
+    const result =
+      await prisma.alertNotification.updateMany({
+        where: {
+          id: notification.id,
+          status: "PROCESSING",
+          lockToken: notification.lockToken,
+          lockedUntil: {
+            gt: new Date(),
+          },
+        },
+        data: {
+          status: "FAILED",
+          attempts: MAX_ATTEMPTS,
+          lastError:
+            "Telegram: notificación no autorizada para el piloto",
+          lockedUntil: null,
+          lockToken: null,
+          nextAttemptAt: null,
+        },
+      });
+
+    if (result.count === 1) {
+      console.warn(
+        `[Telegram] Envío bloqueado por autorización: ${notification.id}`,
+      );
+    }
+
+    return true;
+  }
+}
+  await sendMessage(
     notification.message,
     notification.recipient,
   );
