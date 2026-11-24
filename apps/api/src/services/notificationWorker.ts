@@ -57,6 +57,25 @@ export async function claimNextNotification(
   }
 
   validateManualTelegramTest(manualNotificationId);
+  const automaticMode = !testMode && !manualNotificationId;
+
+const pilotDeviceId =
+  process.env.TELEGRAM_PILOT_DEVICE_ID ?? "";
+
+const pilotOrganizationId =
+  process.env.TELEGRAM_PILOT_ORGANIZATION_ID ?? "";
+
+const pilotChatId =
+  process.env.TELEGRAM_PILOT_CHAT_ID ?? "";
+
+if (
+  automaticMode &&
+  (!pilotDeviceId || !pilotOrganizationId || !pilotChatId)
+) {
+  throw new Error(
+    "Telegram automatico: configuracion del piloto incompleta"
+  );
+}
 
   // Protección: nunca procesar si el envío está deshabilitado.
   if (testMode) {
@@ -87,7 +106,21 @@ export async function claimNextNotification(
   // Recuperar notificaciones cuyo último intento quedó interrumpido.
   const recovered = await prisma.alertNotification.updateMany({
     where: {
-      ...(testMode ? { id: testNotificationId } : {}),
+      ...(testMode  ? { id: testNotificationId }
+    : manualNotificationId
+      ? { id: manualNotificationId }
+      : {
+          channel: "TELEGRAM",
+          recipient: pilotChatId,
+          alert: {
+            deviceId: pilotDeviceId,
+            device: {
+              site: {
+                organizationId: pilotOrganizationId,
+              },
+            },
+          },
+        }),
       status: "PROCESSING",
       attempts: {
         gte: MAX_ATTEMPTS,
@@ -138,6 +171,26 @@ if (recovered.count > 0) {
           NOT ${Boolean(manualNotificationId)}
           OR "channel" = 'TELEGRAM'
         )
+AND (
+  NOT ${automaticMode}
+  OR (
+    "AlertNotification"."channel" = 'TELEGRAM'
+    AND "AlertNotification"."recipient" = ${pilotChatId}
+
+    AND EXISTS (
+      SELECT 1
+      FROM "DeviceAlert" AS a
+      JOIN "Device" AS d
+        ON d."id" = a."deviceId"
+      JOIN "Site" AS s
+        ON s."id" = d."siteId"
+
+      WHERE a."id" = "AlertNotification"."alertId"
+        AND a."deviceId" = ${pilotDeviceId}
+        AND s."organizationId" = ${pilotOrganizationId}
+    )
+  )
+)
         AND "attempts" < ${MAX_ATTEMPTS}
          AND (
          (
